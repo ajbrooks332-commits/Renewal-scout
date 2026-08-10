@@ -58,7 +58,7 @@ export default function ServiceFormPage() {
   const queryClient = useQueryClient();
 
   const { data: detail, isLoading: isFetching } = useGetService(id!, {
-    query: { enabled: !!id }
+    query: { enabled: !!id, queryKey: getGetServiceQueryKey(id!) }
   });
 
   const createService = useCreateService();

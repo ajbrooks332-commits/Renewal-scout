@@ -21,4 +21,6 @@ export interface DealReport {
   applicationPack: string[];
   warnings: string[];
   sources: string[];
+  /** List of assumptions/data used in the comparison */
+  comparisonBasedOn?: string[];
 }

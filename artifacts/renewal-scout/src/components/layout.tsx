@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { useGetMe, useLogout } from "@workspace/api-client-react";
-import { Shield, ShieldAlert, LayoutDashboard, Plus, LogOut, Loader2 } from "lucide-react";
+import { Shield, ShieldAlert, LayoutDashboard, Plus, LogOut, Loader2, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
@@ -42,6 +42,10 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
           <Link href="/" className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors">
             <LayoutDashboard className="h-4 w-4" />
             Dashboard
+          </Link>
+          <Link href="/household" className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors">
+            <Home className="h-4 w-4" />
+            My Household
           </Link>
           <Link href="/services/new" className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors">
             <Plus className="h-4 w-4" />

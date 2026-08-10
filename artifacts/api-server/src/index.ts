@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { recoverStaleJobs, ensureActiveRunIndex } from "./lib/stale-jobs";
+import { runMigrations } from "@workspace/db";
 
 const rawPort = process.env["PORT"];
 
@@ -15,6 +16,15 @@ const port = Number(rawPort);
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
+
+// ── Schema migrations — applied automatically before any traffic ──────────────
+//
+// runMigrations() uses Drizzle's built-in journal to skip already-applied
+// migrations, so it is safe to call on every startup (cold deploy or restart).
+// Fail-closed: if migrations fail (e.g. DB unavailable, constraint error) we
+// do NOT start the server — continuing without schema would give 500s.
+await runMigrations();
+logger.info("Database migrations applied");
 
 // ── Fail-closed DB initialisation — must complete BEFORE accepting traffic ────
 //

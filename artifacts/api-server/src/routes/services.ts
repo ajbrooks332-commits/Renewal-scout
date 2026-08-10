@@ -15,6 +15,7 @@ import {
 } from "../lib/research-service";
 import { daysUntilTarget } from "../lib/renewal-logic";
 import { validateServiceInput, trimServiceInput } from "../lib/validation";
+import { checkCompleteness } from "../lib/completeness";
 
 const router: IRouter = Router();
 
@@ -149,10 +150,13 @@ router.get("/services/:id", async (req, res): Promise<void> => {
     completedAt: r.completedAt?.toISOString() ?? null,
   }));
 
+  const completenessReport = await checkCompleteness(id);
+
   res.json({
     service: serviceToApi(service),
     runs: runsForApi,
     latestReport: latestReport ?? null,
+    completenessReport,
   });
 });
 
@@ -223,6 +227,20 @@ router.post("/services/:id/research", async (req, res): Promise<void> => {
   if (!id) {
     res.status(400).json({ error: "Invalid id" });
     return;
+  }
+
+  // Completeness gate — 422 if blocking fields missing and forceWithMissing not set
+  const body = (req.body ?? {}) as { forceWithMissing?: boolean };
+  if (!body.forceWithMissing) {
+    const completeness = await checkCompleteness(id);
+    if (completeness.blocking) {
+      res.status(422).json({
+        error: "Missing required fields. Provide the missing information or pass forceWithMissing: true to proceed anyway.",
+        missing: completeness.required,
+        completenessReport: completeness,
+      });
+      return;
+    }
   }
 
   let runId: number;

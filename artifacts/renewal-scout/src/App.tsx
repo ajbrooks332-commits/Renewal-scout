@@ -15,6 +15,7 @@ import LoginPage from '@/pages/login';
 import DashboardPage from '@/pages/dashboard';
 import ServiceDetailPage from '@/pages/service-detail';
 import ServiceFormPage from '@/pages/service-form';
+import HouseholdPage from '@/pages/household';
 
 const queryClient = new QueryClient();
 
@@ -24,6 +25,7 @@ function Router() {
       <Switch>
         <Route path="/login" component={LoginPage} />
         <Route path="/" component={DashboardPage} />
+        <Route path="/household" component={HouseholdPage} />
         <Route path="/services/new" component={ServiceFormPage} />
         <Route path="/services/:id" component={ServiceDetailPage} />
         <Route path="/services/:id/edit" component={ServiceFormPage} />

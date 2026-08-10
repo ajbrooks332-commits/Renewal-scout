@@ -2,11 +2,20 @@ import { vi } from "vitest";
 
 // ─── Mock @workspace/db ───────────────────────────────────────────────────────
 // Must be defined before any module that imports it is loaded.
+//
+// We use importOriginal so that real table definitions (servicesTable,
+// currentDealsTable, etc.) are kept intact. Drizzle's `eq()` and other SQL
+// helpers require real column objects — mocking the tables as `{}` causes
+// runtime errors when routes call eq(someTable.id, value).
+// We only replace `db` and `pool` with vi.fn() mocks.
 
-vi.mock("@workspace/db", () => {
+vi.mock("@workspace/db", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@workspace/db")>();
+
   /**
    * Build a chainable query builder mock that resolves to `finalValue` when
-   * awaited. Every method returns the same chain so callers can chain
+   * awaited. Every builder method (from, where, orderBy, set, values,
+   * onConflictDoNothing) returns the same chain so callers can chain
    * .from().where().orderBy().limit() etc. freely.
    */
   const makeChain = (finalValue: unknown = []) => {
@@ -35,6 +44,9 @@ vi.mock("@workspace/db", () => {
   };
 
   return {
+    // Keep real table definitions so Drizzle helpers (eq, etc.) work correctly
+    ...actual,
+    // Replace pool and db with mocks
     pool: {
       query: vi.fn().mockResolvedValue({ rows: [] }),
       connect: vi.fn(),
@@ -44,8 +56,6 @@ vi.mock("@workspace/db", () => {
       update: vi.fn(() => makeChain([])),
       insert: vi.fn(() => makeChain([])),
     },
-    servicesTable: {},
-    researchRunsTable: {},
   };
 });
 

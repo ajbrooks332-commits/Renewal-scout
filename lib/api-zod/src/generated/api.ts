@@ -62,6 +62,129 @@ export const GetDashboardStatsResponse = zod.object({
 
 
 /**
+ * @summary Get the household profile
+ */
+export const GetHouseholdProfileResponse = zod.object({
+  "id": zod.number(),
+  "postcode": zod.string().nullish(),
+  "propertyType": zod.string().nullish(),
+  "tenure": zod.string().nullish(),
+  "bedrooms": zod.number().nullish(),
+  "yearBuilt": zod.number().nullish(),
+  "numAdults": zod.number().nullish(),
+  "numChildren": zod.number().nullish(),
+  "heatingType": zod.string().nullish(),
+  "hasEv": zod.boolean().nullish(),
+  "evChargerType": zod.string().nullish(),
+  "hasSolar": zod.boolean().nullish(),
+  "solarExportTariff": zod.string().nullish(),
+  "annualElectricityKwh": zod.number().nullish(),
+  "annualGasKwh": zod.number().nullish(),
+  "hasSkyTv": zod.boolean().nullish(),
+  "hasSkyMobile": zod.boolean().nullish(),
+  "hasVirginMedia": zod.boolean().nullish(),
+  "numCars": zod.number().nullish(),
+  "carMake": zod.string().nullish(),
+  "carModel": zod.string().nullish(),
+  "carYear": zod.number().nullish(),
+  "carValue": zod.number().nullish(),
+  "annualMileage": zod.number().nullish(),
+  "drivingExperience": zod.string().nullish(),
+  "claimsLast5Years": zod.number().nullish(),
+  "smoker": zod.boolean().nullish(),
+  "accessibilityNeeds": zod.string().nullish(),
+  "generalPreferences": zod.string().nullish(),
+  "questionnaireVersion": zod.string(),
+  "updatedAt": zod.string(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Create or update the household profile
+ */
+export const updateHouseholdProfileBodyPostcodeMax = 10;
+
+export const updateHouseholdProfileBodySolarExportTariffMax = 100;
+
+export const updateHouseholdProfileBodyCarMakeMax = 80;
+
+export const updateHouseholdProfileBodyCarModelMax = 80;
+
+export const updateHouseholdProfileBodyAccessibilityNeedsMax = 500;
+
+export const updateHouseholdProfileBodyGeneralPreferencesMax = 500;
+
+
+
+export const UpdateHouseholdProfileBody = zod.object({
+  "postcode": zod.string().max(updateHouseholdProfileBodyPostcodeMax).nullish(),
+  "propertyType": zod.string().nullish(),
+  "tenure": zod.string().nullish(),
+  "bedrooms": zod.number().nullish(),
+  "yearBuilt": zod.number().nullish(),
+  "numAdults": zod.number().nullish(),
+  "numChildren": zod.number().nullish(),
+  "heatingType": zod.string().nullish(),
+  "hasEv": zod.boolean().nullish(),
+  "evChargerType": zod.string().nullish(),
+  "hasSolar": zod.boolean().nullish(),
+  "solarExportTariff": zod.string().max(updateHouseholdProfileBodySolarExportTariffMax).nullish(),
+  "annualElectricityKwh": zod.number().nullish(),
+  "annualGasKwh": zod.number().nullish(),
+  "hasSkyTv": zod.boolean().nullish(),
+  "hasSkyMobile": zod.boolean().nullish(),
+  "hasVirginMedia": zod.boolean().nullish(),
+  "numCars": zod.number().nullish(),
+  "carMake": zod.string().max(updateHouseholdProfileBodyCarMakeMax).nullish(),
+  "carModel": zod.string().max(updateHouseholdProfileBodyCarModelMax).nullish(),
+  "carYear": zod.number().nullish(),
+  "carValue": zod.number().nullish(),
+  "annualMileage": zod.number().nullish(),
+  "drivingExperience": zod.string().nullish(),
+  "claimsLast5Years": zod.number().nullish(),
+  "smoker": zod.boolean().nullish(),
+  "accessibilityNeeds": zod.string().max(updateHouseholdProfileBodyAccessibilityNeedsMax).nullish(),
+  "generalPreferences": zod.string().max(updateHouseholdProfileBodyGeneralPreferencesMax).nullish()
+})
+
+export const UpdateHouseholdProfileResponse = zod.object({
+  "id": zod.number(),
+  "postcode": zod.string().nullish(),
+  "propertyType": zod.string().nullish(),
+  "tenure": zod.string().nullish(),
+  "bedrooms": zod.number().nullish(),
+  "yearBuilt": zod.number().nullish(),
+  "numAdults": zod.number().nullish(),
+  "numChildren": zod.number().nullish(),
+  "heatingType": zod.string().nullish(),
+  "hasEv": zod.boolean().nullish(),
+  "evChargerType": zod.string().nullish(),
+  "hasSolar": zod.boolean().nullish(),
+  "solarExportTariff": zod.string().nullish(),
+  "annualElectricityKwh": zod.number().nullish(),
+  "annualGasKwh": zod.number().nullish(),
+  "hasSkyTv": zod.boolean().nullish(),
+  "hasSkyMobile": zod.boolean().nullish(),
+  "hasVirginMedia": zod.boolean().nullish(),
+  "numCars": zod.number().nullish(),
+  "carMake": zod.string().nullish(),
+  "carModel": zod.string().nullish(),
+  "carYear": zod.number().nullish(),
+  "carValue": zod.number().nullish(),
+  "annualMileage": zod.number().nullish(),
+  "drivingExperience": zod.string().nullish(),
+  "claimsLast5Years": zod.number().nullish(),
+  "smoker": zod.boolean().nullish(),
+  "accessibilityNeeds": zod.string().nullish(),
+  "generalPreferences": zod.string().nullish(),
+  "questionnaireVersion": zod.string(),
+  "updatedAt": zod.string(),
+  "createdAt": zod.string()
+})
+
+
+/**
  * @summary List all active household services
  */
 export const ListServicesResponseItem = zod.object({
@@ -211,7 +334,8 @@ export const GetServiceResponse = zod.object({
   "comparisonChecklist": zod.array(zod.string()),
   "applicationPack": zod.array(zod.string()),
   "warnings": zod.array(zod.string()),
-  "sources": zod.array(zod.string())
+  "sources": zod.array(zod.string()),
+  "comparisonBasedOn": zod.array(zod.string()).optional().describe('List of assumptions\/data used in the comparison')
 }).optional(),
   "createdAt": zod.string(),
   "startedAt": zod.string().nullable(),
@@ -239,8 +363,15 @@ export const GetServiceResponse = zod.object({
   "comparisonChecklist": zod.array(zod.string()),
   "applicationPack": zod.array(zod.string()),
   "warnings": zod.array(zod.string()),
-  "sources": zod.array(zod.string())
-}).optional()
+  "sources": zod.array(zod.string()),
+  "comparisonBasedOn": zod.array(zod.string()).optional().describe('List of assumptions\/data used in the comparison')
+}).optional(),
+  "completenessReport": zod.object({
+  "required": zod.array(zod.string()).describe('Required fields that are missing — blocks research if non-empty'),
+  "recommended": zod.array(zod.string()).describe('Recommended fields that are missing — shows warning but allows proceeding'),
+  "optional": zod.array(zod.string()).describe('Optional fields that are not filled in'),
+  "blocking": zod.boolean().describe('true if any required fields are missing')
+})
 })
 
 
@@ -341,10 +472,143 @@ export const ArchiveServiceResponse = zod.object({
 
 
 /**
+ * @summary Get service-specific requirement fields
+ */
+export const GetServiceRequirementsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetServiceRequirementsResponse = zod.object({
+  "serviceId": zod.number(),
+  "schemaVersion": zod.string(),
+  "fields": zod.record(zod.string(), zod.unknown()).describe('Service-type-specific requirement answers (values may be null = \"I don\'t know\")'),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Save service-specific requirement fields
+ */
+export const UpdateServiceRequirementsParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateServiceRequirementsBody = zod.object({
+  "fields": zod.record(zod.string(), zod.unknown())
+})
+
+export const UpdateServiceRequirementsResponse = zod.object({
+  "serviceId": zod.number(),
+  "schemaVersion": zod.string(),
+  "fields": zod.record(zod.string(), zod.unknown()).describe('Service-type-specific requirement answers (values may be null = \"I don\'t know\")'),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Get the current deal for a service
+ */
+export const GetCurrentDealParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetCurrentDealResponse = zod.object({
+  "serviceId": zod.number(),
+  "fields": zod.record(zod.string(), zod.object({
+  "value": zod.unknown().optional(),
+  "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
+})).describe('Deal fields — each value includes provenance'),
+  "lastConfirmedAt": zod.string().nullish(),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Save or update the current deal for a service
+ */
+export const UpdateCurrentDealParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const UpdateCurrentDealBody = zod.object({
+  "fields": zod.record(zod.string(), zod.object({
+  "value": zod.unknown().optional(),
+  "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
+}))
+})
+
+export const UpdateCurrentDealResponse = zod.object({
+  "serviceId": zod.number(),
+  "fields": zod.record(zod.string(), zod.object({
+  "value": zod.unknown().optional(),
+  "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
+})).describe('Deal fields — each value includes provenance'),
+  "lastConfirmedAt": zod.string().nullish(),
+  "updatedAt": zod.string()
+})
+
+
+/**
+ * @summary Upload a document (PDF, JPG, PNG ≤ 10 MB) and extract deal fields via AI. The document is sent to the OpenAI API; document bytes are never persisted. Returns a draft with all fields marked extracted_unconfirmed — user must confirm before values are used in research.
+
+ */
+export const ExtractDocumentParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const ExtractDocumentBody = zod.object({
+  "document": zod.instanceof(File)
+})
+
+export const ExtractDocumentResponse = zod.object({
+  "extractionId": zod.string(),
+  "serviceId": zod.number(),
+  "fields": zod.record(zod.string(), zod.object({
+  "value": zod.unknown().optional(),
+  "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
+})).describe('Extracted deal fields — all have source=extracted_unconfirmed until the user confirms them.\n'),
+  "extractedAt": zod.string(),
+  "aiDisclosure": zod.string().describe('Human-readable notice that the document was sent to the OpenAI API')
+})
+
+
+/**
+ * @summary Confirm, correct, or delete extracted field values. Confirmed fields are saved to current_deals with source extracted_confirmed. Deleted fields are removed from the draft.
+
+ */
+export const ConfirmExtractionDraftParams = zod.object({
+  "id": zod.coerce.number(),
+  "extractionId": zod.coerce.string()
+})
+
+export const ConfirmExtractionDraftBody = zod.object({
+  "confirmedFields": zod.record(zod.string(), zod.object({
+  "value": zod.unknown().optional(),
+  "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
+})).describe('Fields to save with source=extracted_confirmed. Pass corrected values here — the user\'s edits override AI values.\n'),
+  "deletedFields": zod.array(zod.string()).optional().describe('Field names to remove from current_deals entirely')
+})
+
+export const ConfirmExtractionDraftResponse = zod.object({
+  "serviceId": zod.number(),
+  "fields": zod.record(zod.string(), zod.object({
+  "value": zod.unknown().optional(),
+  "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
+})).describe('Deal fields — each value includes provenance'),
+  "lastConfirmedAt": zod.string().nullish(),
+  "updatedAt": zod.string()
+})
+
+
+/**
  * @summary Queue and start a research run for a service
  */
 export const TriggerResearchParams = zod.object({
   "id": zod.coerce.number()
+})
+
+export const TriggerResearchBody = zod.object({
+  "forceWithMissing": zod.boolean().optional().describe('Pass true to proceed despite missing required fields. The completeness check still warns but does not block.\n')
 })
 
 export const TriggerResearchResponse = zod.object({
@@ -375,7 +639,8 @@ export const TriggerResearchResponse = zod.object({
   "comparisonChecklist": zod.array(zod.string()),
   "applicationPack": zod.array(zod.string()),
   "warnings": zod.array(zod.string()),
-  "sources": zod.array(zod.string())
+  "sources": zod.array(zod.string()),
+  "comparisonBasedOn": zod.array(zod.string()).optional().describe('List of assumptions\/data used in the comparison')
 }).optional(),
   "createdAt": zod.string(),
   "startedAt": zod.string().nullable(),

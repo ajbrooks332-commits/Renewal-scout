@@ -34,6 +34,7 @@ export const DealReportSchema = z.object({
   application_pack: z.array(z.string()),
   warnings: z.array(z.string()),
   sources: z.array(z.string()),
+  comparison_based_on: z.array(z.string()),
 });
 
 export type DealOption = z.infer<typeof DealOptionSchema>;

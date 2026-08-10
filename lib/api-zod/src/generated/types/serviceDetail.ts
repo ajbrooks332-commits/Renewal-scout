@@ -5,6 +5,7 @@
  * Renewal Scout API
  * OpenAPI spec version: 0.1.0
  */
+import type { CompletenessReport } from './completenessReport';
 import type { DealReport } from './dealReport';
 import type { ResearchRun } from './researchRun';
 import type { Service } from './service';
@@ -13,4 +14,5 @@ export interface ServiceDetail {
   service: Service;
   runs: ResearchRun[];
   latestReport?: DealReport;
+  completenessReport: CompletenessReport;
 }

@@ -21,16 +21,27 @@ import type {
 
 import type {
   AuthStatus,
+  CompletenessError,
+  CurrentDeal,
+  CurrentDealInput,
   DashboardStats,
   DueCheckResult,
   ErrorResponse,
+  ExtractDocumentBody,
+  ExtractionConfirmInput,
+  ExtractionDraft,
   HealthStatus,
+  HouseholdProfile,
+  HouseholdProfileInput,
   LoginInput,
   ResearchRun,
   ResearchRunWithService,
   Service,
   ServiceDetail,
-  ServiceInput
+  ServiceInput,
+  ServiceRequirements,
+  ServiceRequirementsInput,
+  TriggerResearchBody
 } from './api.schemas';
 
 import { customFetch } from '../custom-fetch';
@@ -433,6 +444,154 @@ export function useGetDashboardStats<TData = Awaited<ReturnType<typeof getDashbo
 
 
 
+export const getGetHouseholdProfileUrl = () => {
+
+
+
+
+  return `/api/household-profile`
+}
+
+/**
+ * @summary Get the household profile
+ */
+export const getHouseholdProfile = async ( options?: Parameters<typeof customFetch>[1]): Promise<HouseholdProfile> => {
+
+  return customFetch<HouseholdProfile>(getGetHouseholdProfileUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetHouseholdProfileQueryKey = () => {
+    return [
+    `/api/household-profile`
+    ] as const;
+    }
+
+
+export const getGetHouseholdProfileQueryOptions = <TData = Awaited<ReturnType<typeof getHouseholdProfile>>, TError = ErrorType<ErrorResponse>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHouseholdProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetHouseholdProfileQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getHouseholdProfile>>> = ({ signal }) => getHouseholdProfile({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getHouseholdProfile>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetHouseholdProfileQueryResult = NonNullable<Awaited<ReturnType<typeof getHouseholdProfile>>>
+export type GetHouseholdProfileQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get the household profile
+ */
+
+export function useGetHouseholdProfile<TData = Awaited<ReturnType<typeof getHouseholdProfile>>, TError = ErrorType<ErrorResponse>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getHouseholdProfile>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetHouseholdProfileQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateHouseholdProfileUrl = () => {
+
+
+
+
+  return `/api/household-profile`
+}
+
+/**
+ * @summary Create or update the household profile
+ */
+export const updateHouseholdProfile = async (householdProfileInput: HouseholdProfileInput, options?: Parameters<typeof customFetch>[1]): Promise<HouseholdProfile> => {
+
+  return customFetch<HouseholdProfile>(getUpdateHouseholdProfileUrl(),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(householdProfileInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateHouseholdProfileMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateHouseholdProfile>>, TError,{data: BodyType<HouseholdProfileInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateHouseholdProfile>>, TError,{data: BodyType<HouseholdProfileInput>}, TContext> => {
+
+const mutationKey = ['updateHouseholdProfile'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateHouseholdProfile>>, {data: BodyType<HouseholdProfileInput>}> = (props) => {
+          const {data} = props ?? {};
+
+          return  updateHouseholdProfile(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateHouseholdProfileMutationResult = NonNullable<Awaited<ReturnType<typeof updateHouseholdProfile>>>
+    export type UpdateHouseholdProfileMutationBody = BodyType<HouseholdProfileInput>
+    export type UpdateHouseholdProfileMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Create or update the household profile
+ */
+export const useUpdateHouseholdProfile = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateHouseholdProfile>>, TError,{data: BodyType<HouseholdProfileInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateHouseholdProfile>>,
+        TError,
+        {data: BodyType<HouseholdProfileInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateHouseholdProfileMutationOptions(options));
+    }
+
 export const getListServicesUrl = () => {
 
 
@@ -801,6 +960,456 @@ export const useArchiveService = <TError = ErrorType<ErrorResponse>,
       return useMutation(getArchiveServiceMutationOptions(options));
     }
 
+export const getGetServiceRequirementsUrl = (id: number,) => {
+
+
+
+
+  return `/api/services/${id}/requirements`
+}
+
+/**
+ * @summary Get service-specific requirement fields
+ */
+export const getServiceRequirements = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ServiceRequirements> => {
+
+  return customFetch<ServiceRequirements>(getGetServiceRequirementsUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetServiceRequirementsQueryKey = (id: number,) => {
+    return [
+    `/api/services/${id}/requirements`
+    ] as const;
+    }
+
+
+export const getGetServiceRequirementsQueryOptions = <TData = Awaited<ReturnType<typeof getServiceRequirements>>, TError = ErrorType<ErrorResponse>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getServiceRequirements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetServiceRequirementsQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getServiceRequirements>>> = ({ signal }) => getServiceRequirements(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getServiceRequirements>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetServiceRequirementsQueryResult = NonNullable<Awaited<ReturnType<typeof getServiceRequirements>>>
+export type GetServiceRequirementsQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get service-specific requirement fields
+ */
+
+export function useGetServiceRequirements<TData = Awaited<ReturnType<typeof getServiceRequirements>>, TError = ErrorType<ErrorResponse>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getServiceRequirements>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetServiceRequirementsQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateServiceRequirementsUrl = (id: number,) => {
+
+
+
+
+  return `/api/services/${id}/requirements`
+}
+
+/**
+ * @summary Save service-specific requirement fields
+ */
+export const updateServiceRequirements = async (id: number,
+    serviceRequirementsInput: ServiceRequirementsInput, options?: Parameters<typeof customFetch>[1]): Promise<ServiceRequirements> => {
+
+  return customFetch<ServiceRequirements>(getUpdateServiceRequirementsUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(serviceRequirementsInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateServiceRequirementsMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateServiceRequirements>>, TError,{id: number;data: BodyType<ServiceRequirementsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateServiceRequirements>>, TError,{id: number;data: BodyType<ServiceRequirementsInput>}, TContext> => {
+
+const mutationKey = ['updateServiceRequirements'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateServiceRequirements>>, {id: number;data: BodyType<ServiceRequirementsInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateServiceRequirements(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateServiceRequirementsMutationResult = NonNullable<Awaited<ReturnType<typeof updateServiceRequirements>>>
+    export type UpdateServiceRequirementsMutationBody = BodyType<ServiceRequirementsInput>
+    export type UpdateServiceRequirementsMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Save service-specific requirement fields
+ */
+export const useUpdateServiceRequirements = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateServiceRequirements>>, TError,{id: number;data: BodyType<ServiceRequirementsInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateServiceRequirements>>,
+        TError,
+        {id: number;data: BodyType<ServiceRequirementsInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateServiceRequirementsMutationOptions(options));
+    }
+
+export const getGetCurrentDealUrl = (id: number,) => {
+
+
+
+
+  return `/api/services/${id}/current-deal`
+}
+
+/**
+ * @summary Get the current deal for a service
+ */
+export const getCurrentDeal = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<CurrentDeal> => {
+
+  return customFetch<CurrentDeal>(getGetCurrentDealUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetCurrentDealQueryKey = (id: number,) => {
+    return [
+    `/api/services/${id}/current-deal`
+    ] as const;
+    }
+
+
+export const getGetCurrentDealQueryOptions = <TData = Awaited<ReturnType<typeof getCurrentDeal>>, TError = ErrorType<ErrorResponse>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCurrentDeal>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetCurrentDealQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getCurrentDeal>>> = ({ signal }) => getCurrentDeal(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getCurrentDeal>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetCurrentDealQueryResult = NonNullable<Awaited<ReturnType<typeof getCurrentDeal>>>
+export type GetCurrentDealQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get the current deal for a service
+ */
+
+export function useGetCurrentDeal<TData = Awaited<ReturnType<typeof getCurrentDeal>>, TError = ErrorType<ErrorResponse>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getCurrentDeal>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetCurrentDealQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getUpdateCurrentDealUrl = (id: number,) => {
+
+
+
+
+  return `/api/services/${id}/current-deal`
+}
+
+/**
+ * @summary Save or update the current deal for a service
+ */
+export const updateCurrentDeal = async (id: number,
+    currentDealInput: CurrentDealInput, options?: Parameters<typeof customFetch>[1]): Promise<CurrentDeal> => {
+
+  return customFetch<CurrentDeal>(getUpdateCurrentDealUrl(id),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(currentDealInput)
+  }
+);}
+
+
+
+
+
+export const getUpdateCurrentDealMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCurrentDeal>>, TError,{id: number;data: BodyType<CurrentDealInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateCurrentDeal>>, TError,{id: number;data: BodyType<CurrentDealInput>}, TContext> => {
+
+const mutationKey = ['updateCurrentDeal'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateCurrentDeal>>, {id: number;data: BodyType<CurrentDealInput>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateCurrentDeal(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateCurrentDealMutationResult = NonNullable<Awaited<ReturnType<typeof updateCurrentDeal>>>
+    export type UpdateCurrentDealMutationBody = BodyType<CurrentDealInput>
+    export type UpdateCurrentDealMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Save or update the current deal for a service
+ */
+export const useUpdateCurrentDeal = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateCurrentDeal>>, TError,{id: number;data: BodyType<CurrentDealInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateCurrentDeal>>,
+        TError,
+        {id: number;data: BodyType<CurrentDealInput>},
+        TContext
+      > => {
+      return useMutation(getUpdateCurrentDealMutationOptions(options));
+    }
+
+export const getExtractDocumentUrl = (id: number,) => {
+
+
+
+
+  return `/api/services/${id}/extract-document`
+}
+
+/**
+ * @summary Upload a document (PDF, JPG, PNG ≤ 10 MB) and extract deal fields via AI. The document is sent to the OpenAI API; document bytes are never persisted. Returns a draft with all fields marked extracted_unconfirmed — user must confirm before values are used in research.
+
+ */
+export const extractDocument = async (id: number,
+    extractDocumentBody: ExtractDocumentBody, options?: Parameters<typeof customFetch>[1]): Promise<ExtractionDraft> => {
+    const formData = new FormData();
+formData.append(`document`, extractDocumentBody.document);
+
+  return customFetch<ExtractionDraft>(getExtractDocumentUrl(id),
+  {
+    ...options,
+    method: 'POST'
+    ,
+    body: formData
+  }
+);}
+
+
+
+
+
+export const getExtractDocumentMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof extractDocument>>, TError,{id: number;data: BodyType<ExtractDocumentBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof extractDocument>>, TError,{id: number;data: BodyType<ExtractDocumentBody>}, TContext> => {
+
+const mutationKey = ['extractDocument'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof extractDocument>>, {id: number;data: BodyType<ExtractDocumentBody>}> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  extractDocument(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ExtractDocumentMutationResult = NonNullable<Awaited<ReturnType<typeof extractDocument>>>
+    export type ExtractDocumentMutationBody = BodyType<ExtractDocumentBody>
+    export type ExtractDocumentMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Upload a document (PDF, JPG, PNG ≤ 10 MB) and extract deal fields via AI. The document is sent to the OpenAI API; document bytes are never persisted. Returns a draft with all fields marked extracted_unconfirmed — user must confirm before values are used in research.
+
+ */
+export const useExtractDocument = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof extractDocument>>, TError,{id: number;data: BodyType<ExtractDocumentBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof extractDocument>>,
+        TError,
+        {id: number;data: BodyType<ExtractDocumentBody>},
+        TContext
+      > => {
+      return useMutation(getExtractDocumentMutationOptions(options));
+    }
+
+export const getConfirmExtractionDraftUrl = (id: number,
+    extractionId: string,) => {
+
+
+
+
+  return `/api/services/${id}/extraction-draft/${extractionId}/confirm`
+}
+
+/**
+ * @summary Confirm, correct, or delete extracted field values. Confirmed fields are saved to current_deals with source extracted_confirmed. Deleted fields are removed from the draft.
+
+ */
+export const confirmExtractionDraft = async (id: number,
+    extractionId: string,
+    extractionConfirmInput: ExtractionConfirmInput, options?: Parameters<typeof customFetch>[1]): Promise<CurrentDeal> => {
+
+  return customFetch<CurrentDeal>(getConfirmExtractionDraftUrl(id,extractionId),
+  {
+    ...options,
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(extractionConfirmInput)
+  }
+);}
+
+
+
+
+
+export const getConfirmExtractionDraftMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmExtractionDraft>>, TError,{id: number;extractionId: string;data: BodyType<ExtractionConfirmInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof confirmExtractionDraft>>, TError,{id: number;extractionId: string;data: BodyType<ExtractionConfirmInput>}, TContext> => {
+
+const mutationKey = ['confirmExtractionDraft'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof confirmExtractionDraft>>, {id: number;extractionId: string;data: BodyType<ExtractionConfirmInput>}> = (props) => {
+          const {id,extractionId,data} = props ?? {};
+
+          return  confirmExtractionDraft(id,extractionId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ConfirmExtractionDraftMutationResult = NonNullable<Awaited<ReturnType<typeof confirmExtractionDraft>>>
+    export type ConfirmExtractionDraftMutationBody = BodyType<ExtractionConfirmInput>
+    export type ConfirmExtractionDraftMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Confirm, correct, or delete extracted field values. Confirmed fields are saved to current_deals with source extracted_confirmed. Deleted fields are removed from the draft.
+
+ */
+export const useConfirmExtractionDraft = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof confirmExtractionDraft>>, TError,{id: number;extractionId: string;data: BodyType<ExtractionConfirmInput>}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof confirmExtractionDraft>>,
+        TError,
+        {id: number;extractionId: string;data: BodyType<ExtractionConfirmInput>},
+        TContext
+      > => {
+      return useMutation(getConfirmExtractionDraftMutationOptions(options));
+    }
+
 export const getTriggerResearchUrl = (id: number,) => {
 
 
@@ -812,14 +1421,15 @@ export const getTriggerResearchUrl = (id: number,) => {
 /**
  * @summary Queue and start a research run for a service
  */
-export const triggerResearch = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ResearchRun> => {
+export const triggerResearch = async (id: number,
+    triggerResearchBody?: TriggerResearchBody, options?: Parameters<typeof customFetch>[1]): Promise<ResearchRun> => {
 
   return customFetch<ResearchRun>(getTriggerResearchUrl(id),
   {
     ...options,
-    method: 'POST'
-
-
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...options?.headers },
+    body: JSON.stringify(triggerResearchBody)
   }
 );}
 
@@ -827,9 +1437,9 @@ export const triggerResearch = async (id: number, options?: Parameters<typeof cu
 
 
 
-export const getTriggerResearchMutationOptions = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerResearch>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
-): UseMutationOptions<Awaited<ReturnType<typeof triggerResearch>>, TError,{id: number}, TContext> => {
+export const getTriggerResearchMutationOptions = <TError = ErrorType<ErrorResponse | CompletenessError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerResearch>>, TError,{id: number;data?: BodyType<TriggerResearchBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof triggerResearch>>, TError,{id: number;data?: BodyType<TriggerResearchBody>}, TContext> => {
 
 const mutationKey = ['triggerResearch'];
 const {mutation: mutationOptions, request: requestOptions} = options ?
@@ -841,10 +1451,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
 
 
-      const mutationFn: MutationFunction<Awaited<ReturnType<typeof triggerResearch>>, {id: number}> = (props) => {
-          const {id} = props ?? {};
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof triggerResearch>>, {id: number;data?: BodyType<TriggerResearchBody>}> = (props) => {
+          const {id,data} = props ?? {};
 
-          return  triggerResearch(id,requestOptions)
+          return  triggerResearch(id,data,requestOptions)
         }
 
 
@@ -855,18 +1465,18 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
   return  { mutationFn, ...mutationOptions }}
 
     export type TriggerResearchMutationResult = NonNullable<Awaited<ReturnType<typeof triggerResearch>>>
-
-    export type TriggerResearchMutationError = ErrorType<ErrorResponse>
+    export type TriggerResearchMutationBody = BodyType<TriggerResearchBody> | undefined
+    export type TriggerResearchMutationError = ErrorType<ErrorResponse | CompletenessError>
 
     /**
  * @summary Queue and start a research run for a service
  */
-export const useTriggerResearch = <TError = ErrorType<ErrorResponse>,
-    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerResearch>>, TError,{id: number}, TContext>, request?: SecondParameter<typeof customFetch>}
+export const useTriggerResearch = <TError = ErrorType<ErrorResponse | CompletenessError>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof triggerResearch>>, TError,{id: number;data?: BodyType<TriggerResearchBody>}, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof triggerResearch>>,
         TError,
-        {id: number},
+        {id: number;data?: BodyType<TriggerResearchBody>},
         TContext
       > => {
       return useMutation(getTriggerResearchMutationOptions(options));

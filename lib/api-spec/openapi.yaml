@@ -18,6 +18,10 @@ tags:
     description: Research runs and reports
   - name: dashboard
     description: Dashboard stats
+  - name: household
+    description: Household profile
+  - name: deals
+    description: Current deal records and document extraction
 
 paths:
   /healthz:
@@ -96,6 +100,54 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/DashboardStats"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /household-profile:
+    get:
+      operationId: getHouseholdProfile
+      tags: [household]
+      summary: Get the household profile
+      responses:
+        "200":
+          description: Household profile (may be mostly null if not yet filled in)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HouseholdProfile"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateHouseholdProfile
+      tags: [household]
+      summary: Create or update the household profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/HouseholdProfileInput"
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HouseholdProfile"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
@@ -256,6 +308,266 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /services/{id}/requirements:
+    get:
+      operationId: getServiceRequirements
+      tags: [services]
+      summary: Get service-specific requirement fields
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Requirements (empty object if none saved yet)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceRequirements"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateServiceRequirements
+      tags: [services]
+      summary: Save service-specific requirement fields
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceRequirementsInput"
+      responses:
+        "200":
+          description: Saved requirements
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceRequirements"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /services/{id}/current-deal:
+    get:
+      operationId: getCurrentDeal
+      tags: [deals]
+      summary: Get the current deal for a service
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Current deal fields with provenance
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentDeal"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateCurrentDeal
+      tags: [deals]
+      summary: Save or update the current deal for a service
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CurrentDealInput"
+      responses:
+        "200":
+          description: Updated current deal
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentDeal"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /services/{id}/extract-document:
+    post:
+      operationId: extractDocument
+      tags: [deals]
+      summary: >
+        Upload a document (PDF, JPG, PNG ≤ 10 MB) and extract deal fields via AI.
+        The document is sent to the OpenAI API; document bytes are never persisted.
+        Returns a draft with all fields marked extracted_unconfirmed — user must
+        confirm before values are used in research.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                document:
+                  type: string
+                  format: binary
+              required:
+                - document
+      responses:
+        "200":
+          description: Extraction draft — all fields are extracted_unconfirmed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionDraft"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          description: File too large (> 10 MB)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "415":
+          description: Unsupported file type (only PDF, JPG, PNG accepted)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /services/{id}/extraction-draft/{extractionId}/confirm:
+    put:
+      operationId: confirmExtractionDraft
+      tags: [deals]
+      summary: >
+        Confirm, correct, or delete extracted field values.
+        Confirmed fields are saved to current_deals with source extracted_confirmed.
+        Deleted fields are removed from the draft.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+        - name: extractionId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExtractionConfirmInput"
+      responses:
+        "200":
+          description: Updated current deal after confirmation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentDeal"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Service or extraction not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /services/{id}/research:
     post:
       operationId: triggerResearch
@@ -267,6 +579,18 @@ paths:
           required: true
           schema:
             type: number
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                forceWithMissing:
+                  type: boolean
+                  description: >
+                    Pass true to proceed despite missing required fields.
+                    The completeness check still warns but does not block.
       responses:
         "202":
           description: Research queued
@@ -286,6 +610,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+        "422":
+          description: Missing required fields — pass forceWithMissing to override
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CompletenessError"
 
   /research-runs:
     get:
@@ -383,6 +713,318 @@ components:
         - totalAnnualCostGbp
         - withinNinetyDays
         - dueNow
+
+    # ─── Household profile ──────────────────────────────────────────────────────
+
+    HouseholdProfile:
+      type: object
+      properties:
+        id:
+          type: number
+        postcode:
+          type: ["string", "null"]
+        propertyType:
+          type: ["string", "null"]
+        tenure:
+          type: ["string", "null"]
+        bedrooms:
+          type: ["number", "null"]
+        yearBuilt:
+          type: ["number", "null"]
+        numAdults:
+          type: ["number", "null"]
+        numChildren:
+          type: ["number", "null"]
+        heatingType:
+          type: ["string", "null"]
+        hasEv:
+          type: ["boolean", "null"]
+        evChargerType:
+          type: ["string", "null"]
+        hasSolar:
+          type: ["boolean", "null"]
+        solarExportTariff:
+          type: ["string", "null"]
+        annualElectricityKwh:
+          type: ["number", "null"]
+        annualGasKwh:
+          type: ["number", "null"]
+        hasSkyTv:
+          type: ["boolean", "null"]
+        hasSkyMobile:
+          type: ["boolean", "null"]
+        hasVirginMedia:
+          type: ["boolean", "null"]
+        numCars:
+          type: ["number", "null"]
+        carMake:
+          type: ["string", "null"]
+        carModel:
+          type: ["string", "null"]
+        carYear:
+          type: ["number", "null"]
+        carValue:
+          type: ["number", "null"]
+        annualMileage:
+          type: ["number", "null"]
+        drivingExperience:
+          type: ["string", "null"]
+        claimsLast5Years:
+          type: ["number", "null"]
+        smoker:
+          type: ["boolean", "null"]
+        accessibilityNeeds:
+          type: ["string", "null"]
+        generalPreferences:
+          type: ["string", "null"]
+        questionnaireVersion:
+          type: string
+        updatedAt:
+          type: string
+        createdAt:
+          type: string
+      required:
+        - id
+        - questionnaireVersion
+        - updatedAt
+        - createdAt
+
+    HouseholdProfileInput:
+      type: object
+      properties:
+        postcode:
+          type: ["string", "null"]
+          maxLength: 10
+        propertyType:
+          type: ["string", "null"]
+        tenure:
+          type: ["string", "null"]
+        bedrooms:
+          type: ["number", "null"]
+        yearBuilt:
+          type: ["number", "null"]
+        numAdults:
+          type: ["number", "null"]
+        numChildren:
+          type: ["number", "null"]
+        heatingType:
+          type: ["string", "null"]
+        hasEv:
+          type: ["boolean", "null"]
+        evChargerType:
+          type: ["string", "null"]
+        hasSolar:
+          type: ["boolean", "null"]
+        solarExportTariff:
+          type: ["string", "null"]
+          maxLength: 100
+        annualElectricityKwh:
+          type: ["number", "null"]
+        annualGasKwh:
+          type: ["number", "null"]
+        hasSkyTv:
+          type: ["boolean", "null"]
+        hasSkyMobile:
+          type: ["boolean", "null"]
+        hasVirginMedia:
+          type: ["boolean", "null"]
+        numCars:
+          type: ["number", "null"]
+        carMake:
+          type: ["string", "null"]
+          maxLength: 80
+        carModel:
+          type: ["string", "null"]
+          maxLength: 80
+        carYear:
+          type: ["number", "null"]
+        carValue:
+          type: ["number", "null"]
+        annualMileage:
+          type: ["number", "null"]
+        drivingExperience:
+          type: ["string", "null"]
+        claimsLast5Years:
+          type: ["number", "null"]
+        smoker:
+          type: ["boolean", "null"]
+        accessibilityNeeds:
+          type: ["string", "null"]
+          maxLength: 500
+        generalPreferences:
+          type: ["string", "null"]
+          maxLength: 500
+
+    # ─── Service requirements ───────────────────────────────────────────────────
+
+    ServiceRequirements:
+      type: object
+      properties:
+        serviceId:
+          type: number
+        schemaVersion:
+          type: string
+        fields:
+          type: object
+          description: Service-type-specific requirement answers (values may be null = "I don't know")
+          additionalProperties: true
+        updatedAt:
+          type: string
+      required:
+        - serviceId
+        - schemaVersion
+        - fields
+        - updatedAt
+
+    ServiceRequirementsInput:
+      type: object
+      properties:
+        fields:
+          type: object
+          additionalProperties: true
+      required:
+        - fields
+
+    # ─── Current deal ───────────────────────────────────────────────────────────
+
+    ProvenanceSource:
+      type: string
+      enum:
+        - user
+        - extracted_confirmed
+        - extracted_unconfirmed
+        - unknown
+
+    ProvenanceField:
+      type: object
+      properties:
+        value: {}
+        source:
+          $ref: "#/components/schemas/ProvenanceSource"
+      required:
+        - source
+
+    CurrentDeal:
+      type: object
+      properties:
+        serviceId:
+          type: number
+        fields:
+          type: object
+          description: Deal fields — each value includes provenance
+          additionalProperties:
+            $ref: "#/components/schemas/ProvenanceField"
+        lastConfirmedAt:
+          type: ["string", "null"]
+        updatedAt:
+          type: string
+      required:
+        - serviceId
+        - fields
+        - updatedAt
+
+    CurrentDealInput:
+      type: object
+      properties:
+        fields:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/ProvenanceField"
+      required:
+        - fields
+
+    # ─── Document extraction ────────────────────────────────────────────────────
+
+    ExtractionDraft:
+      type: object
+      properties:
+        extractionId:
+          type: string
+        serviceId:
+          type: number
+        fields:
+          type: object
+          description: >
+            Extracted deal fields — all have source=extracted_unconfirmed
+            until the user confirms them.
+          additionalProperties:
+            $ref: "#/components/schemas/ProvenanceField"
+        extractedAt:
+          type: string
+        aiDisclosure:
+          type: string
+          description: Human-readable notice that the document was sent to the OpenAI API
+      required:
+        - extractionId
+        - serviceId
+        - fields
+        - extractedAt
+        - aiDisclosure
+
+    ExtractionConfirmInput:
+      type: object
+      properties:
+        confirmedFields:
+          type: object
+          description: >
+            Fields to save with source=extracted_confirmed.
+            Pass corrected values here — the user's edits override AI values.
+          additionalProperties:
+            $ref: "#/components/schemas/ProvenanceField"
+        deletedFields:
+          type: array
+          items:
+            type: string
+          description: Field names to remove from current_deals entirely
+      required:
+        - confirmedFields
+
+    # ─── Completeness ───────────────────────────────────────────────────────────
+
+    CompletenessReport:
+      type: object
+      properties:
+        required:
+          type: array
+          items:
+            type: string
+          description: Required fields that are missing — blocks research if non-empty
+        recommended:
+          type: array
+          items:
+            type: string
+          description: Recommended fields that are missing — shows warning but allows proceeding
+        optional:
+          type: array
+          items:
+            type: string
+          description: Optional fields that are not filled in
+        blocking:
+          type: boolean
+          description: true if any required fields are missing
+      required:
+        - required
+        - recommended
+        - optional
+        - blocking
+
+    CompletenessError:
+      type: object
+      properties:
+        error:
+          type: string
+        missing:
+          type: array
+          items:
+            type: string
+        completenessReport:
+          $ref: "#/components/schemas/CompletenessReport"
+      required:
+        - error
+        - missing
+        - completenessReport
+
+    # ─── Services ───────────────────────────────────────────────────────────────
 
     Service:
       type: object
@@ -588,9 +1230,12 @@ components:
             $ref: "#/components/schemas/ResearchRun"
         latestReport:
           $ref: "#/components/schemas/DealReport"
+        completenessReport:
+          $ref: "#/components/schemas/CompletenessReport"
       required:
         - service
         - runs
+        - completenessReport
 
     DealOption:
       type: object
@@ -669,6 +1314,11 @@ components:
           type: array
           items:
             type: string
+        comparisonBasedOn:
+          type: array
+          items:
+            type: string
+          description: List of assumptions/data used in the comparison
       required:
         - serviceType
         - asOfDate

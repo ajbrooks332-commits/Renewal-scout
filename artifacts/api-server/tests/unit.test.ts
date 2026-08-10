@@ -235,6 +235,7 @@ describe("DealReport Zod validation (import-level test)", () => {
       application_pack: ["Current bill"],
       warnings: [],
       sources: ["https://bt.com"],
+      comparison_based_on: ["Postcode: SW1A 1AA"],
     };
     const result = DealReportSchema.safeParse(validReport);
     expect(result.success).toBe(true);

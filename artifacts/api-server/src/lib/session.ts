@@ -26,12 +26,19 @@ const secret = rawSecret ?? "dev-only-change-this";
 
 const PgSession = connectPgSimple(session);
 
+// In the test environment the PG pool is mocked and cannot persist sessions.
+// Use an in-memory store so that login → cookie → protected-route flows work.
+const store =
+  process.env["NODE_ENV"] === "test"
+    ? new session.MemoryStore()
+    : new PgSession({
+        pool,
+        createTableIfMissing: true,
+        tableName: "user_sessions",
+      });
+
 export const sessionMiddleware: RequestHandler = session({
-  store: new PgSession({
-    pool,
-    createTableIfMissing: true,
-    tableName: "user_sessions",
-  }),
+  store,
   secret,
   resave: false,
   saveUninitialized: false,

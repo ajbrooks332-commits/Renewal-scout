@@ -31,6 +31,244 @@ export interface DashboardStats {
   dueNow: number;
 }
 
+export interface HouseholdProfile {
+  id: number;
+  /** @nullable */
+  postcode?: string | null;
+  /** @nullable */
+  propertyType?: string | null;
+  /** @nullable */
+  tenure?: string | null;
+  /** @nullable */
+  bedrooms?: number | null;
+  /** @nullable */
+  yearBuilt?: number | null;
+  /** @nullable */
+  numAdults?: number | null;
+  /** @nullable */
+  numChildren?: number | null;
+  /** @nullable */
+  heatingType?: string | null;
+  /** @nullable */
+  hasEv?: boolean | null;
+  /** @nullable */
+  evChargerType?: string | null;
+  /** @nullable */
+  hasSolar?: boolean | null;
+  /** @nullable */
+  solarExportTariff?: string | null;
+  /** @nullable */
+  annualElectricityKwh?: number | null;
+  /** @nullable */
+  annualGasKwh?: number | null;
+  /** @nullable */
+  hasSkyTv?: boolean | null;
+  /** @nullable */
+  hasSkyMobile?: boolean | null;
+  /** @nullable */
+  hasVirginMedia?: boolean | null;
+  /** @nullable */
+  numCars?: number | null;
+  /** @nullable */
+  carMake?: string | null;
+  /** @nullable */
+  carModel?: string | null;
+  /** @nullable */
+  carYear?: number | null;
+  /** @nullable */
+  carValue?: number | null;
+  /** @nullable */
+  annualMileage?: number | null;
+  /** @nullable */
+  drivingExperience?: string | null;
+  /** @nullable */
+  claimsLast5Years?: number | null;
+  /** @nullable */
+  smoker?: boolean | null;
+  /** @nullable */
+  accessibilityNeeds?: string | null;
+  /** @nullable */
+  generalPreferences?: string | null;
+  questionnaireVersion: string;
+  updatedAt: string;
+  createdAt: string;
+}
+
+export interface HouseholdProfileInput {
+  /**
+     * @maxLength 10
+     * @nullable
+     */
+  postcode?: string | null;
+  /** @nullable */
+  propertyType?: string | null;
+  /** @nullable */
+  tenure?: string | null;
+  /** @nullable */
+  bedrooms?: number | null;
+  /** @nullable */
+  yearBuilt?: number | null;
+  /** @nullable */
+  numAdults?: number | null;
+  /** @nullable */
+  numChildren?: number | null;
+  /** @nullable */
+  heatingType?: string | null;
+  /** @nullable */
+  hasEv?: boolean | null;
+  /** @nullable */
+  evChargerType?: string | null;
+  /** @nullable */
+  hasSolar?: boolean | null;
+  /**
+     * @maxLength 100
+     * @nullable
+     */
+  solarExportTariff?: string | null;
+  /** @nullable */
+  annualElectricityKwh?: number | null;
+  /** @nullable */
+  annualGasKwh?: number | null;
+  /** @nullable */
+  hasSkyTv?: boolean | null;
+  /** @nullable */
+  hasSkyMobile?: boolean | null;
+  /** @nullable */
+  hasVirginMedia?: boolean | null;
+  /** @nullable */
+  numCars?: number | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  carMake?: string | null;
+  /**
+     * @maxLength 80
+     * @nullable
+     */
+  carModel?: string | null;
+  /** @nullable */
+  carYear?: number | null;
+  /** @nullable */
+  carValue?: number | null;
+  /** @nullable */
+  annualMileage?: number | null;
+  /** @nullable */
+  drivingExperience?: string | null;
+  /** @nullable */
+  claimsLast5Years?: number | null;
+  /** @nullable */
+  smoker?: boolean | null;
+  /**
+     * @maxLength 500
+     * @nullable
+     */
+  accessibilityNeeds?: string | null;
+  /**
+     * @maxLength 500
+     * @nullable
+     */
+  generalPreferences?: string | null;
+}
+
+/**
+ * Service-type-specific requirement answers (values may be null = "I don't know")
+ */
+export type ServiceRequirementsFields = { [key: string]: unknown };
+
+export interface ServiceRequirements {
+  serviceId: number;
+  schemaVersion: string;
+  /** Service-type-specific requirement answers (values may be null = "I don't know") */
+  fields: ServiceRequirementsFields;
+  updatedAt: string;
+}
+
+export type ServiceRequirementsInputFields = { [key: string]: unknown };
+
+export interface ServiceRequirementsInput {
+  fields: ServiceRequirementsInputFields;
+}
+
+export type ProvenanceSource = typeof ProvenanceSource[keyof typeof ProvenanceSource];
+
+
+export const ProvenanceSource = {
+  user: 'user',
+  extracted_confirmed: 'extracted_confirmed',
+  extracted_unconfirmed: 'extracted_unconfirmed',
+  unknown: 'unknown',
+} as const;
+
+export interface ProvenanceField {
+  value?: unknown;
+  source: ProvenanceSource;
+}
+
+/**
+ * Deal fields — each value includes provenance
+ */
+export type CurrentDealFields = {[key: string]: ProvenanceField};
+
+export interface CurrentDeal {
+  serviceId: number;
+  /** Deal fields — each value includes provenance */
+  fields: CurrentDealFields;
+  /** @nullable */
+  lastConfirmedAt?: string | null;
+  updatedAt: string;
+}
+
+export type CurrentDealInputFields = {[key: string]: ProvenanceField};
+
+export interface CurrentDealInput {
+  fields: CurrentDealInputFields;
+}
+
+/**
+ * Extracted deal fields — all have source=extracted_unconfirmed until the user confirms them.
+ */
+export type ExtractionDraftFields = {[key: string]: ProvenanceField};
+
+export interface ExtractionDraft {
+  extractionId: string;
+  serviceId: number;
+  /** Extracted deal fields — all have source=extracted_unconfirmed until the user confirms them. */
+  fields: ExtractionDraftFields;
+  extractedAt: string;
+  /** Human-readable notice that the document was sent to the OpenAI API */
+  aiDisclosure: string;
+}
+
+/**
+ * Fields to save with source=extracted_confirmed. Pass corrected values here — the user's edits override AI values.
+ */
+export type ExtractionConfirmInputConfirmedFields = {[key: string]: ProvenanceField};
+
+export interface ExtractionConfirmInput {
+  /** Fields to save with source=extracted_confirmed. Pass corrected values here — the user's edits override AI values. */
+  confirmedFields: ExtractionConfirmInputConfirmedFields;
+  /** Field names to remove from current_deals entirely */
+  deletedFields?: string[];
+}
+
+export interface CompletenessReport {
+  /** Required fields that are missing — blocks research if non-empty */
+  required: string[];
+  /** Recommended fields that are missing — shows warning but allows proceeding */
+  recommended: string[];
+  /** Optional fields that are not filled in */
+  optional: string[];
+  /** true if any required fields are missing */
+  blocking: boolean;
+}
+
+export interface CompletenessError {
+  error: string;
+  missing: string[];
+  completenessReport: CompletenessReport;
+}
+
 export interface Service {
   id: number;
   serviceType: string;
@@ -139,6 +377,8 @@ export interface DealReport {
   applicationPack: string[];
   warnings: string[];
   sources: string[];
+  /** List of assumptions/data used in the comparison */
+  comparisonBasedOn?: string[];
 }
 
 export interface ResearchRun {
@@ -181,5 +421,15 @@ export interface ServiceDetail {
   service: Service;
   runs: ResearchRun[];
   latestReport?: DealReport;
+  completenessReport: CompletenessReport;
 }
+
+export type ExtractDocumentBody = {
+  document: Blob;
+};
+
+export type TriggerResearchBody = {
+  /** Pass true to proceed despite missing required fields. The completeness check still warns but does not block. */
+  forceWithMissing?: boolean;
+};
 

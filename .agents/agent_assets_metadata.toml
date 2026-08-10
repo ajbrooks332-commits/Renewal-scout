@@ -7,3 +7,10 @@ uri = "file://RENEWAL_SCOUT_BUILD_REPORT.md"
 type = "text"
 title = "Renewal Scout — Build Report"
 description = "Complete source-code inspection report covering all backend, frontend, DB schema, OpenAPI spec, and design decisions. Paste into ChatGPT for review."
+
+[[outputs]]
+id = "k1iYo6-b-R7irjDC1-t9p"
+uri = "file://renewal-scout-source.zip"
+type = "unspecified"
+title = "Renewal Scout — Full Source Export"
+description = "All source files from api-server, renewal-scout frontend, and lib/db — ready to upload to ChatGPT for review."
