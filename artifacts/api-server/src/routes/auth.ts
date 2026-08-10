@@ -1,7 +1,28 @@
 import { Router, type IRouter } from "express";
+import { rateLimit, ipKeyGenerator } from "express-rate-limit";
+import { timingSafeEqual } from "crypto";
 import { LoginBody } from "@workspace/api-zod";
 
 const router: IRouter = Router();
+
+// ─── Rate limiter: max 10 login attempts per 15 minutes per IP ───────────────
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  standardHeaders: "draft-7",
+  legacyHeaders: false,
+  message: {
+    error:
+      "Too many login attempts. Please wait 15 minutes before trying again.",
+  },
+  // Use req.ip (trusted via trust proxy) as the key
+  keyGenerator: (req) => ipKeyGenerator(req.ip ?? "unknown"),
+});
+
+function isSchedulerEnabled(): boolean {
+  const val = process.env["SCHEDULER_ENABLED"];
+  return !!val && val !== "false";
+}
 
 function getSetupWarnings(): string[] {
   const warnings: string[] = [];
@@ -11,17 +32,41 @@ function getSetupWarnings(): string[] {
   if (!process.env["OPENAI_API_KEY"]) {
     warnings.push("OPENAI_API_KEY has not been set; research cannot run.");
   }
+  if (!isSchedulerEnabled()) {
+    warnings.push(
+      "Automatic daily research is disabled. Set SCHEDULER_ENABLED=true in Replit Secrets to enable it.",
+    );
+  }
   return warnings;
 }
 
+/**
+ * Timing-safe password comparison. Compares two strings without leaking
+ * length or content information via timing side-channels.
+ */
+function passwordsMatch(candidate: string, stored: string): boolean {
+  // Pad shorter buffer so timingSafeEqual can compare equal lengths
+  const bufA = Buffer.from(candidate);
+  const bufB = Buffer.from(stored);
+  const len = Math.max(bufA.length, bufB.length);
+  const paddedA = Buffer.concat([bufA], len);
+  const paddedB = Buffer.concat([bufB], len);
+  // Always run comparison (no short-circuit on length mismatch)
+  const match = timingSafeEqual(paddedA, paddedB);
+  return match && bufA.length === bufB.length;
+}
+
+// GET /auth/me — returns auth status, setup warnings, and scheduler state
 router.get("/auth/me", (req, res): void => {
   res.json({
     authenticated: req.session?.authenticated === true,
+    schedulerEnabled: isSchedulerEnabled(),
     setupWarnings: getSetupWarnings(),
   });
 });
 
-router.post("/auth/login", (req, res): void => {
+// POST /auth/login — rate-limited, timing-safe password check, session regeneration
+router.post("/auth/login", loginLimiter, (req, res): void => {
   const parsed = LoginBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Missing password." });
@@ -37,21 +82,30 @@ router.post("/auth/login", (req, res): void => {
     return;
   }
 
-  if (parsed.data.password !== adminPassword) {
+  if (!passwordsMatch(parsed.data.password, adminPassword)) {
     res.status(401).json({ error: "Incorrect password." });
     return;
   }
 
-  req.session.authenticated = true;
-  res.json({
-    authenticated: true,
-    setupWarnings: getSetupWarnings(),
+  // Regenerate session to prevent session-fixation attacks
+  req.session.regenerate((err) => {
+    if (err) {
+      res.status(500).json({ error: "Session error during login." });
+      return;
+    }
+    req.session.authenticated = true;
+    res.json({
+      authenticated: true,
+      schedulerEnabled: isSchedulerEnabled(),
+      setupWarnings: getSetupWarnings(),
+    });
   });
 });
 
+// POST /auth/logout
 router.post("/auth/logout", (req, res): void => {
   req.session.destroy(() => {
-    res.json({ authenticated: false, setupWarnings: [] });
+    res.json({ authenticated: false, schedulerEnabled: false, setupWarnings: [] });
   });
 });
 

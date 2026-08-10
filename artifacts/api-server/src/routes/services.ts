@@ -1,7 +1,11 @@
 import { Router, type IRouter } from "express";
 import { eq, asc } from "drizzle-orm";
 import { db, servicesTable } from "@workspace/db";
-import { CreateServiceBody, UpdateServiceBody, GetServiceParams } from "@workspace/api-zod";
+import {
+  CreateServiceBody,
+  UpdateServiceBody,
+  GetServiceParams,
+} from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/require-auth";
 import {
   queueResearch,
@@ -10,6 +14,7 @@ import {
   serviceToApi,
 } from "../lib/research-service";
 import { daysUntilTarget } from "../lib/renewal-logic";
+import { validateServiceInput, trimServiceInput } from "../lib/validation";
 
 const router: IRouter = Router();
 
@@ -22,22 +27,31 @@ function parseId(raw: string | string[] | undefined): number | null {
 }
 
 function buildServiceValues(data: Record<string, unknown>) {
+  // Trim short text fields before storing
+  const trimmed = trimServiceInput(data);
   return {
-    serviceType: (data.serviceType as string | undefined) ?? "Other",
-    provider: (data.provider as string) ?? "",
-    productName: (data.productName as string | null | undefined) ?? null,
-    monthlyCostGbp: (data.monthlyCostGbp as number | null | undefined) ?? null,
-    annualCostGbp: (data.annualCostGbp as number | null | undefined) ?? null,
-    renewalDate: (data.renewalDate as string | null | undefined) ?? null,
+    serviceType: (trimmed["serviceType"] as string | undefined) ?? "Other",
+    provider: (trimmed["provider"] as string) ?? "",
+    productName:
+      (trimmed["productName"] as string | null | undefined) ?? null,
+    monthlyCostGbp:
+      (trimmed["monthlyCostGbp"] as number | null | undefined) ?? null,
+    annualCostGbp:
+      (trimmed["annualCostGbp"] as number | null | undefined) ?? null,
+    renewalDate:
+      (trimmed["renewalDate"] as string | null | undefined) ?? null,
     contractEndDate:
-      (data.contractEndDate as string | null | undefined) ?? null,
-    noticeDays: (data.noticeDays as number | undefined) ?? 30,
-    researchWindowDays: (data.researchWindowDays as number | undefined) ?? 60,
-    location: (data.location as string | null | undefined) ?? null,
-    currentTerms: (data.currentTerms as string | null | undefined) ?? null,
-    preferences: (data.preferences as string | null | undefined) ?? null,
-    quoteFacts: (data.quoteFacts as string | null | undefined) ?? null,
-    autoResearch: (data.autoResearch as boolean | undefined) ?? true,
+      (trimmed["contractEndDate"] as string | null | undefined) ?? null,
+    noticeDays: (trimmed["noticeDays"] as number | undefined) ?? 30,
+    researchWindowDays:
+      (trimmed["researchWindowDays"] as number | undefined) ?? 60,
+    location: (trimmed["location"] as string | null | undefined) ?? null,
+    currentTerms:
+      (trimmed["currentTerms"] as string | null | undefined) ?? null,
+    preferences:
+      (trimmed["preferences"] as string | null | undefined) ?? null,
+    quoteFacts: (trimmed["quoteFacts"] as string | null | undefined) ?? null,
+    autoResearch: (trimmed["autoResearch"] as boolean | undefined) ?? true,
   };
 }
 
@@ -68,11 +82,22 @@ router.post("/services", async (req, res): Promise<void> => {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  if (!parsed.data.provider?.trim()) {
+
+  const rawData = parsed.data as Record<string, unknown>;
+  const trimmed = trimServiceInput(rawData);
+
+  if (!trimmed["provider"] || !(trimmed["provider"] as string).trim()) {
     res.status(400).json({ error: "Provider is required." });
     return;
   }
-  const values = buildServiceValues(parsed.data as Record<string, unknown>);
+
+  const fieldErrors = validateServiceInput(trimmed);
+  if (fieldErrors.length > 0) {
+    res.status(400).json({ error: "Validation failed.", fields: fieldErrors });
+    return;
+  }
+
+  const values = buildServiceValues(rawData);
   const [service] = await db
     .insert(servicesTable)
     .values(values)
@@ -82,8 +107,11 @@ router.post("/services", async (req, res): Promise<void> => {
 
 // GET /services/:id
 router.get("/services/:id", async (req, res): Promise<void> => {
-  const id = parseId(req.params.id);
-  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const id = parseId(req.params["id"]);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
 
   const { researchRunsTable } = await import("@workspace/db");
   const { desc } = await import("drizzle-orm");
@@ -92,7 +120,10 @@ router.get("/services/:id", async (req, res): Promise<void> => {
     .select()
     .from(servicesTable)
     .where(eq(servicesTable.id, id));
-  if (!service) { res.status(404).json({ error: "Service not found." }); return; }
+  if (!service) {
+    res.status(404).json({ error: "Service not found." });
+    return;
+  }
 
   const runs = await db
     .select()
@@ -102,7 +133,9 @@ router.get("/services/:id", async (req, res): Promise<void> => {
     .limit(12);
 
   const latestComplete = runs.find((r) => r.status === "complete") ?? null;
-  const latestReport = latestComplete ? toApiReport(latestComplete.reportJson) : null;
+  const latestReport = latestComplete
+    ? toApiReport(latestComplete.reportJson)
+    : null;
 
   const runsForApi = runs.map((r) => ({
     id: r.id,
@@ -125,46 +158,72 @@ router.get("/services/:id", async (req, res): Promise<void> => {
 
 // PUT /services/:id
 router.put("/services/:id", async (req, res): Promise<void> => {
-  const id = parseId(req.params.id);
-  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const id = parseId(req.params["id"]);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
 
   const parsed = UpdateServiceBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
-  if (!parsed.data.provider?.trim()) {
+
+  const rawData = parsed.data as Record<string, unknown>;
+  const trimmed = trimServiceInput(rawData);
+
+  if (!trimmed["provider"] || !(trimmed["provider"] as string).trim()) {
     res.status(400).json({ error: "Provider is required." });
     return;
   }
-  const values = buildServiceValues(parsed.data as Record<string, unknown>);
+
+  const fieldErrors = validateServiceInput(trimmed);
+  if (fieldErrors.length > 0) {
+    res.status(400).json({ error: "Validation failed.", fields: fieldErrors });
+    return;
+  }
+
+  const values = buildServiceValues(rawData);
   const [service] = await db
     .update(servicesTable)
     .set({ ...values, updatedAt: new Date() })
     .where(eq(servicesTable.id, id))
     .returning();
-  if (!service) { res.status(404).json({ error: "Service not found." }); return; }
+  if (!service) {
+    res.status(404).json({ error: "Service not found." });
+    return;
+  }
   res.json(serviceToApi(service));
 });
 
 // POST /services/:id/archive
 router.post("/services/:id/archive", async (req, res): Promise<void> => {
-  const id = parseId(req.params.id);
-  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const id = parseId(req.params["id"]);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
 
   const [service] = await db
     .update(servicesTable)
     .set({ active: false, updatedAt: new Date() })
     .where(eq(servicesTable.id, id))
     .returning();
-  if (!service) { res.status(404).json({ error: "Service not found." }); return; }
+  if (!service) {
+    res.status(404).json({ error: "Service not found." });
+    return;
+  }
   res.json(serviceToApi(service));
 });
 
 // POST /services/:id/research
 router.post("/services/:id/research", async (req, res): Promise<void> => {
-  const id = parseId(req.params.id);
-  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const id = parseId(req.params["id"]);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id" });
+    return;
+  }
 
   let runId: number;
   try {
@@ -176,7 +235,7 @@ router.post("/services/:id/research", async (req, res): Promise<void> => {
 
   // Fire research in background
   executeResearch(runId).catch((e) =>
-    req.log.error({ e }, "Background research error")
+    req.log.error({ e }, "Background research error"),
   );
 
   const { researchRunsTable } = await import("@workspace/db");
