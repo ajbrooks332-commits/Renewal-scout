@@ -14,3 +14,10 @@ uri = "file://renewal-scout-source.zip"
 type = "unspecified"
 title = "Renewal Scout — Full Source Export"
 description = "All source files from api-server, renewal-scout frontend, and lib/db — ready to upload to ChatGPT for review."
+
+[[outputs]]
+id = "8QPz8bzhe6mlnB6qFRx06"
+uri = "file://renewal-scout-export.txt"
+type = "text"
+title = "Renewal Scout — Full Source Code"
+description = "All source files concatenated — copy this into ChatGPT."
