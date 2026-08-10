@@ -1,0 +1,9 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "rWc0cd-SXCWg3YoCLBGHC"
+uri = "file://RENEWAL_SCOUT_BUILD_REPORT.md"
+type = "text"
+title = "Renewal Scout — Build Report"
+description = "Complete source-code inspection report covering all backend, frontend, DB schema, OpenAPI spec, and design decisions. Paste into ChatGPT for review."
