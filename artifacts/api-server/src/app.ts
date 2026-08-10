@@ -99,6 +99,30 @@ app.use(sessionMiddleware);
 // CSRF / Origin validation on all mutation routes
 app.use("/api", csrfProtection);
 
+// ─── Public source download (no auth) ────────────────────────────────────────
+// Temporary route for downloading the source code export.
+// Served before the auth-protected /api routes.
+import { readFileSync, existsSync } from "fs";
+import { resolve, dirname } from "path";
+import { fileURLToPath } from "url";
+
+app.get("/download-source", (_req, res) => {
+  const candidates = [
+    resolve(dirname(fileURLToPath(import.meta.url)), "../../renewal-scout-export.txt"),
+    resolve(process.cwd(), "../../renewal-scout-export.txt"),
+    "/home/runner/workspace/renewal-scout-export.txt",
+  ];
+  const filePath = candidates.find(existsSync);
+  if (!filePath) {
+    res.status(404).send("Source export not found. Please regenerate it.");
+    return;
+  }
+  const content = readFileSync(filePath, "utf8");
+  res.setHeader("Content-Type", "text/plain; charset=utf-8");
+  res.setHeader("Content-Disposition", 'attachment; filename="renewal-scout-source.txt"');
+  res.send(content);
+});
+
 // API routes
 app.use("/api", router);
 
