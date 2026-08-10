@@ -3,6 +3,8 @@ import cors from "cors";
 import pinoHttp from "pino-http";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { sessionMiddleware } from "./lib/session";
+import { startScheduler, stopScheduler } from "./lib/scheduler";
 
 const app: Express = express();
 
@@ -25,10 +27,20 @@ app.use(
     },
   }),
 );
-app.use(cors());
+app.use(cors({ credentials: true, origin: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(sessionMiddleware);
 
 app.use("/api", router);
+
+// Start daily scheduler on first import
+startScheduler();
+
+// Graceful shutdown
+process.on("SIGTERM", () => {
+  stopScheduler();
+  process.exit(0);
+});
 
 export default app;

@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Renewal Scout"
+description = "A private password-protected household renewal dashboard for the UK. Tracks broadband, energy, insurance, credit cards, loans, and similar services. Records renewal dates, triggers AI-powered web research to compare current public deals, and shows structured comparison reports with clickable sources. Deliberately stops before submitting forms, applying for credit, or making payments. Includes a daily scheduler for automatic research within configurable windows before renewal dates."
+version = "1.0.0"
+id = "artifacts/renewal-scout"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22914
+
+[services.development]
+run = "pnpm --filter @workspace/renewal-scout run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/renewal-scout", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/renewal-scout/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22914"
+BASE_PATH = "/"

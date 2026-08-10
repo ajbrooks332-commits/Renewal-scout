@@ -3,20 +3,28 @@ info:
   # Do not change the title, if the title changes, the import paths will be broken
   title: Api
   version: 0.1.0
-  description: API specification
+  description: Renewal Scout API
 servers:
   - url: /api
     description: Base API path
 tags:
   - name: health
     description: Health operations
+  - name: auth
+    description: Authentication
+  - name: services
+    description: Household service management
+  - name: research
+    description: Research runs and reports
+  - name: dashboard
+    description: Dashboard stats
+
 paths:
   /healthz:
     get:
       operationId: healthCheck
       tags: [health]
       summary: Health check
-      description: Returns server health status
       responses:
         "200":
           description: Healthy
@@ -24,6 +32,301 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Log in with admin password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+        "401":
+          description: Wrong password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: Log out
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  /auth/me:
+    get:
+      operationId: getMe
+      tags: [auth]
+      summary: Get current auth status
+      responses:
+        "200":
+          description: Auth state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthStatus"
+
+  /dashboard/stats:
+    get:
+      operationId: getDashboardStats
+      tags: [dashboard]
+      summary: Get dashboard summary statistics
+      responses:
+        "200":
+          description: Stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardStats"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /services:
+    get:
+      operationId: listServices
+      tags: [services]
+      summary: List all active household services
+      responses:
+        "200":
+          description: List of services
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Service"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      operationId: createService
+      tags: [services]
+      summary: Create a new household service
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceInput"
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /services/{id}:
+    get:
+      operationId: getService
+      tags: [services]
+      summary: Get a single service with its research runs
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Service with runs
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceDetail"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    put:
+      operationId: updateService
+      tags: [services]
+      summary: Update an existing service
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceInput"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /services/{id}/archive:
+    post:
+      operationId: archiveService
+      tags: [services]
+      summary: Archive a service (soft delete)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Archived
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Service"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /services/{id}/research:
+    post:
+      operationId: triggerResearch
+      tags: [research]
+      summary: Queue and start a research run for a service
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "202":
+          description: Research queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResearchRun"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /research-runs:
+    get:
+      operationId: listResearchRuns
+      tags: [research]
+      summary: List recent research runs across all services
+      responses:
+        "200":
+          description: Recent research runs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ResearchRunWithService"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /due-check:
+    post:
+      operationId: runDueCheck
+      tags: [research]
+      summary: Scan all active services and queue research for those that are due
+      responses:
+        "202":
+          description: Due check started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DueCheckResult"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
 components:
   schemas:
     HealthStatus:
@@ -34,3 +337,348 @@ components:
       required:
         - status
 
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
+
+    LoginInput:
+      type: object
+      properties:
+        password:
+          type: string
+          minLength: 1
+      required:
+        - password
+
+    AuthStatus:
+      type: object
+      properties:
+        authenticated:
+          type: boolean
+        setupWarnings:
+          type: array
+          items:
+            type: string
+      required:
+        - authenticated
+        - setupWarnings
+
+    DashboardStats:
+      type: object
+      properties:
+        totalServices:
+          type: number
+        totalAnnualCostGbp:
+          type: ["number", "null"]
+        withinNinetyDays:
+          type: number
+        dueNow:
+          type: number
+      required:
+        - totalServices
+        - totalAnnualCostGbp
+        - withinNinetyDays
+        - dueNow
+
+    Service:
+      type: object
+      properties:
+        id:
+          type: number
+        serviceType:
+          type: string
+        provider:
+          type: string
+        productName:
+          type: ["string", "null"]
+        monthlyCostGbp:
+          type: ["number", "null"]
+        annualCostGbp:
+          type: ["number", "null"]
+        effectiveAnnualCostGbp:
+          type: ["number", "null"]
+        renewalDate:
+          type: ["string", "null"]
+        contractEndDate:
+          type: ["string", "null"]
+        noticeDays:
+          type: number
+        researchWindowDays:
+          type: number
+        location:
+          type: ["string", "null"]
+        currentTerms:
+          type: ["string", "null"]
+        preferences:
+          type: ["string", "null"]
+        quoteFacts:
+          type: ["string", "null"]
+        autoResearch:
+          type: boolean
+        active:
+          type: boolean
+        lastResearchedAt:
+          type: ["string", "null"]
+        nextResearchAt:
+          type: ["string", "null"]
+        daysRemaining:
+          type: ["number", "null"]
+        targetDate:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        updatedAt:
+          type: string
+      required:
+        - id
+        - serviceType
+        - provider
+        - productName
+        - monthlyCostGbp
+        - annualCostGbp
+        - effectiveAnnualCostGbp
+        - renewalDate
+        - contractEndDate
+        - noticeDays
+        - researchWindowDays
+        - location
+        - currentTerms
+        - preferences
+        - quoteFacts
+        - autoResearch
+        - active
+        - lastResearchedAt
+        - nextResearchAt
+        - daysRemaining
+        - targetDate
+        - createdAt
+        - updatedAt
+
+    ServiceInput:
+      type: object
+      properties:
+        serviceType:
+          type: string
+          maxLength: 40
+        provider:
+          type: string
+          minLength: 1
+          maxLength: 160
+        productName:
+          type: ["string", "null"]
+        monthlyCostGbp:
+          type: ["number", "null"]
+        annualCostGbp:
+          type: ["number", "null"]
+        renewalDate:
+          type: ["string", "null"]
+        contractEndDate:
+          type: ["string", "null"]
+        noticeDays:
+          type: number
+          minimum: 0
+          maximum: 365
+        researchWindowDays:
+          type: number
+          minimum: 1
+          maximum: 365
+        location:
+          type: ["string", "null"]
+        currentTerms:
+          type: ["string", "null"]
+        preferences:
+          type: ["string", "null"]
+        quoteFacts:
+          type: ["string", "null"]
+        autoResearch:
+          type: boolean
+      required:
+        - serviceType
+        - provider
+
+    ResearchRun:
+      type: object
+      properties:
+        id:
+          type: number
+        serviceId:
+          type: number
+        trigger:
+          type: string
+        status:
+          type: string
+        error:
+          type: ["string", "null"]
+        report:
+          $ref: "#/components/schemas/DealReport"
+        createdAt:
+          type: string
+        startedAt:
+          type: ["string", "null"]
+        completedAt:
+          type: ["string", "null"]
+      required:
+        - id
+        - serviceId
+        - trigger
+        - status
+        - error
+        - createdAt
+        - startedAt
+        - completedAt
+
+    ResearchRunWithService:
+      type: object
+      properties:
+        id:
+          type: number
+        serviceId:
+          type: number
+        serviceName:
+          type: string
+        serviceType:
+          type: string
+        trigger:
+          type: string
+        status:
+          type: string
+        error:
+          type: ["string", "null"]
+        createdAt:
+          type: string
+        startedAt:
+          type: ["string", "null"]
+        completedAt:
+          type: ["string", "null"]
+      required:
+        - id
+        - serviceId
+        - serviceName
+        - serviceType
+        - trigger
+        - status
+        - error
+        - createdAt
+        - startedAt
+        - completedAt
+
+    DueCheckResult:
+      type: object
+      properties:
+        queued:
+          type: number
+        message:
+          type: string
+      required:
+        - queued
+        - message
+
+    ServiceDetail:
+      type: object
+      properties:
+        service:
+          $ref: "#/components/schemas/Service"
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ResearchRun"
+        latestReport:
+          $ref: "#/components/schemas/DealReport"
+      required:
+        - service
+        - runs
+
+    DealOption:
+      type: object
+      properties:
+        provider:
+          type: string
+        productName:
+          type: string
+        priceStatus:
+          type: string
+        annualCostGbp:
+          type: ["number", "null"]
+        monthlyCostGbp:
+          type: ["number", "null"]
+        contractLengthMonths:
+          type: ["number", "null"]
+        headlineTerms:
+          type: array
+          items:
+            type: string
+        importantExclusions:
+          type: array
+          items:
+            type: string
+        sourceUrls:
+          type: array
+          items:
+            type: string
+      required:
+        - provider
+        - productName
+        - priceStatus
+        - annualCostGbp
+        - monthlyCostGbp
+        - contractLengthMonths
+        - headlineTerms
+        - importantExclusions
+        - sourceUrls
+
+    DealReport:
+      type: object
+      properties:
+        serviceType:
+          type: string
+        asOfDate:
+          type: string
+        scopeStatement:
+          type: string
+        currentDealAssessment:
+          type: string
+        options:
+          type: array
+          items:
+            $ref: "#/components/schemas/DealOption"
+        recommendedNextStep:
+          type: string
+        estimatedAnnualSavingGbp:
+          type: ["number", "null"]
+        missingInformation:
+          type: array
+          items:
+            type: string
+        comparisonChecklist:
+          type: array
+          items:
+            type: string
+        applicationPack:
+          type: array
+          items:
+            type: string
+        warnings:
+          type: array
+          items:
+            type: string
+        sources:
+          type: array
+          items:
+            type: string
+      required:
+        - serviceType
+        - asOfDate
+        - scopeStatement
+        - currentDealAssessment
+        - options
+        - recommendedNextStep
+        - estimatedAnnualSavingGbp
+        - missingInformation
+        - comparisonChecklist
+        - applicationPack
+        - warnings
+        - sources
