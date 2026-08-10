@@ -1,0 +1,86 @@
+Please carry out a pre-publication security and reliability hardening pass on the existing Renewal Scout application.
+
+Do not rebuild the application, change the current Node/React/Express architecture, redesign the interface, or remove existing functionality. Do not make any real OpenAI API calls while testing; mock the OpenAI client.
+
+Make the following changes:
+
+OPENAI
+
+1. In research-service.ts, replace the hard-coded "gpt-4o" model with:
+
+   process.env.OPENAI_MODEL ?? "gpt-5.6-terra"
+
+2. Replace the legacy web_search_preview tool with the current web_search tool.
+
+3. Set tool_choice to "required" because every completed comparison must use current web research.
+
+4. Extract URL citation annotations from the Responses API output. Merge these verified citation URLs into report.sources and ensure the frontend displays them as clearly visible, clickable links.
+
+5. Retain the strict structured-output schema and all existing safety instructions.
+
+6. Validate the parsed report at runtime instead of relying only on a TypeScript type assertion.
+
+AUTHENTICATION AND SECURITY
+
+7. Remove the "dev-only-change-this" SESSION_SECRET fallback in production. Refuse to start a production deployment if SESSION_SECRET is missing or too short.
+
+8. Configure Express for Replit's reverse proxy using app.set("trust proxy", 1).
+
+9. Replace unrestricted:
+   cors({ credentials: true, origin: true })
+   with a strict same-origin production policy. Development origins must be explicitly allowlisted.
+
+10. Add CSRF protection or strict Origin validation to every state-changing authenticated endpoint, including service create/update/archive, research, due-check and logout.
+
+11. Add rate limiting to /api/auth/login.
+
+12. Use crypto.timingSafeEqual for password comparison and regenerate the session after successful authentication to prevent session fixation.
+
+13. Add appropriate Helmet security headers.
+
+14. Replace the default express-session MemoryStore with a PostgreSQL-backed session store using the existing DATABASE_URL.
+
+RESEARCH JOB SAFETY
+
+15. Fix executeResearch so a queued job is atomically claimed. Only one process may change a run from queued to running and call OpenAI. If a run is already running or complete, return without calling OpenAI again.
+
+16. Add recovery for research jobs left in running status after a server restart. Mark stale jobs failed or safely requeue them.
+
+17. Prevent duplicate scheduled and manual OpenAI calls for the same run.
+
+SCHEDULER
+
+18. Keep SCHEDULER_ENABLED as an explicit setting, but add a visible authenticated setup warning when it is absent or false.
+
+19. Document that the production secret must be:
+    SCHEDULER_ENABLED=true
+
+20. Confirm that only one production server process starts the scheduler.
+
+INPUT VALIDATION
+
+21. Require costs to be zero or positive.
+
+22. Validate renewalDate and contractEndDate as real ISO YYYY-MM-DD dates.
+
+23. Trim providers and other short text fields before saving them.
+
+24. Enforce suitable maximum lengths on all free-text fields.
+
+NOTIFICATIONS
+
+25. Restore optional email notifications when research completes. Use SMTP through Nodemailer, with secrets for SMTP_HOST, SMTP_PORT, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM, ALERT_EMAIL and APP_BASE_URL.
+
+26. Email failure must never discard or fail a completed research report.
+
+TESTING AND DEPLOYMENT
+
+27. Add tests covering login rate limiting, cookie security, CSRF/origin protection, authorization, duplicate research prevention, scheduler enablement, stale-job recovery, URL sanitisation and mocked OpenAI output.
+
+28. Run the complete typecheck, unit tests and production build.
+
+29. Verify the production run command, the single external PORT, database schema application and production database connection.
+
+30. Do not publish the application. At the end, provide the exact files changed, test commands, results, remaining warnings and the production secrets I must add.
+
+Do not expose, print, log or modify the values of any existing secrets.

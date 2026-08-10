@@ -1,0 +1,292 @@
+IMPORTANT ADDITIONAL PRODUCT REQUIREMENT: PERSONAL REQUIREMENTS AND CURRENT-DEAL INTAKE
+
+The existing application does not collect enough customer information to make reliable personalised comparisons. Add the following functionality while preserving all previous security, research, citation and transaction-boundary requirements.
+
+1. CREATE A GUIDED ONBOARDING AND QUESTIONNAIRE
+
+Add a “My household and requirements” section.
+
+The application must ask structured questions before researching a service. Use a step-by-step wizard with:
+
+* Back, Continue and Save and finish later buttons.
+* A visible completion indicator.
+* “I don’t know” as a valid answer.
+* Conditional questions based on previous answers.
+* A final review page.
+* The ability to edit answers later.
+* Accessible form labels and clear explanations of why important information is requested.
+
+Use versioned, deterministic question schemas in the application for the normal questions. AI may generate targeted follow-up questions when information is missing or contradictory, but it must not replace the core questionnaire or silently change saved answers.
+
+The application must never invent an answer. Save unknown values as unknown.
+
+2. HOUSEHOLD PROFILE
+
+Collect and store, where relevant:
+
+* UK postcode.
+* Number of adults and children.
+* Homeowner, tenant or landlord.
+* Preferred balance between lowest price, service quality and flexibility.
+* Willingness to change provider.
+* Preference for fixed or variable pricing.
+* Existing subscriptions and providers.
+* Services the customer may be willing to bundle.
+* Any accessibility or communication requirements.
+
+Do not request or store passwords, payment-card numbers, bank details, security answers or supplier-login credentials.
+
+3. SERVICE-SPECIFIC REQUIREMENTS
+
+Electricity and gas:
+
+* Current supplier and tariff if known.
+* Electricity-only, gas-only or dual fuel.
+* Annual electricity and gas usage in kWh.
+* Smart meter availability.
+* Electric vehicle ownership.
+* EV model if the user wishes to provide it.
+* Approximate annual EV mileage.
+* Home charger availability and charger type.
+* Preferred overnight charging hours.
+* Solar panels, home battery or export tariff.
+* Fixed or variable tariff preference.
+* Green-energy preference.
+* Current payment method.
+
+Broadband, television and mobile:
+
+* Current broadband provider.
+* Current download speed and desired minimum speed.
+* Full-fibre availability if known.
+* Number of household users.
+* Home working, video calls, streaming or online gaming requirements.
+* Landline requirement.
+* Existing television subscriptions, including Sky TV.
+* Existing mobile contracts, including Sky Mobile.
+* Current bundle discounts.
+* Willingness to bundle or separate broadband, television and mobile.
+* Required television channels or sports packages.
+* Contract end date and exit fee.
+
+Car insurance:
+
+* Vehicle make, model and year.
+* Approximate annual mileage.
+* Personal, commuting or business use.
+* Number of drivers.
+* Cover level.
+* No-claims discount years.
+* Voluntary excess preference.
+* Required add-ons.
+* Renewal date.
+
+Do not collect driving-licence numbers or unnecessarily sensitive identifying information.
+
+Home insurance:
+
+* Buildings, contents or combined cover.
+* Property type.
+* Owner or tenant.
+* Approximate rebuild and contents values where known.
+* Valuable items requiring separate cover.
+* Cover away from home.
+* Claims history supplied by the user.
+* Preferred excess.
+* Renewal date.
+
+Life insurance:
+
+* Existing cover amount.
+* Policy type and remaining term.
+* Desired cover and purpose.
+* General smoking status only if the user chooses to supply it.
+* Whether professional advice is required.
+
+Do not collect detailed medical records. Life-insurance results must be described as preliminary research, not financial or medical advice, and must recommend regulated professional advice where appropriate.
+
+Credit cards and loans:
+
+* Provider and product.
+* Current balance.
+* Credit limit if relevant.
+* Interest rate or APR.
+* Promotional rate and expiry date.
+* Monthly payment.
+* Annual or monthly fees.
+* Remaining loan term.
+* Early repayment or settlement charges.
+* User’s objective, such as reducing interest or paying off debt.
+
+Never collect card numbers, bank account numbers, security codes, login details or security answers. Never apply for credit or initiate a credit search.
+
+4. CURRENT-DEAL RECORD
+
+For every service, add a separate “My current deal” record containing:
+
+* Provider.
+* Product or tariff name.
+* Monthly and annual cost.
+* Usage-based rates where relevant.
+* Contract start and end dates.
+* Renewal date.
+* Minimum term.
+* Exit or cancellation fee.
+* Included benefits.
+* Exclusions.
+* Excesses.
+* Annual price increases.
+* Promotional discounts and their expiry dates.
+* Bundle discounts.
+* Services included in the bundle.
+* Notes.
+* Date on which the information was last confirmed.
+
+Each field must record its source:
+
+* Entered by user.
+* Extracted from document and awaiting confirmation.
+* Extracted from document and confirmed.
+* Unknown.
+
+5. DOCUMENT UPLOAD AND EXTRACTION
+
+Add an “Upload my current deal” option accepting PDF, JPG and PNG documents such as:
+
+* Bills.
+* Renewal notices.
+* Insurance policy schedules.
+* Tariff summaries.
+* Credit-card statements.
+* Loan statements.
+* Contract summaries.
+
+Requirements:
+
+* Maximum file size 10 MB.
+* Validate the actual MIME type and reject unsupported files.
+* Do not make files publicly accessible.
+* Do not log document contents.
+* Do not permanently store original document bytes.
+* Process the file in memory or temporary private storage and delete temporary data after extraction.
+* Prefer inline Base64 input rather than retaining files through the Files API.
+* Set `store: false` on document-extraction Responses API calls.
+* Do not use background mode for document extraction.
+* Do not send passwords, payment details or authentication credentials to the model.
+* Tell the user that the document will be processed by the OpenAI API before upload.
+
+Use the OpenAI Responses API and Structured Outputs with a strict Zod schema to extract only relevant contract fields. The schema must permit unknown or null values.
+
+Extracted values must be saved as an unconfirmed draft. Present every extracted field on a review screen where the user can:
+
+* Confirm it.
+* Correct it.
+* Mark it unknown.
+* Delete the extraction.
+
+Do not use extracted information for research until the user confirms it.
+
+Structured output does not guarantee factual correctness. The user-confirmation step is mandatory.
+
+6. MISSING-INFORMATION CHECK
+
+Before starting deal research, calculate whether the profile is sufficiently complete for that service.
+
+If important information is missing, block research and display targeted questions such as:
+
+* “Do you have a smart meter?”
+* “When would you normally charge your electric car?”
+* “Are you willing to move your Sky TV and broadband to different suppliers?”
+* “Does your current price include a Sky Mobile discount?”
+* “What is your current contract end date?”
+* “Please upload a recent bill or enter your annual usage.”
+
+Classify fields as:
+
+* Required before research.
+* Recommended for a better comparison.
+* Optional.
+
+Allow research with recommended fields missing only after warning that the results may be less accurate. Required fields must be supplied or explicitly marked unknown.
+
+7. RESEARCH CONTEXT AND RESULTS
+
+Send only confirmed profile and current-deal information to the deal-research process.
+
+The research prompt must include:
+
+* Confirmed customer requirements.
+* Current deal.
+* Existing bundles and subscriptions.
+* Required features.
+* Renewal date.
+* Exit fee.
+* Any missing or unknown information.
+
+The comparison must distinguish:
+
+* Headline advertised price.
+* Price applicable to this customer.
+* One-off fees.
+* Expected annual cost.
+* Exit fees from the existing contract.
+* Bundle discounts gained or lost.
+* Price after promotional periods.
+* Material differences in cover or service.
+* Eligibility conditions.
+* Information that still needs verification.
+
+Every results page must show a “Comparison based on” section so the user can see and correct the assumptions used.
+
+Do not describe an offer as the “best deal” unless eligibility, required features and total comparable cost have been checked. Otherwise call it a potentially suitable deal.
+
+8. SAFETY BOUNDARY
+
+The application may:
+
+* Collect requirements.
+* Extract and organise contract information.
+* Research offers.
+* Prepare comparisons and renewal plans.
+* Create checklists and reminders.
+
+The application must not:
+
+* Log into supplier, insurer, lender or bank accounts.
+* Store supplier-account passwords.
+* Accept terms.
+* Cancel a contract.
+* Switch a supplier.
+* Submit an insurance or credit application.
+* Run a credit search.
+* Make a payment.
+* Enter payment information.
+* Complete any binding transaction.
+
+All such actions remain with the user.
+
+9. DATABASE AND TESTING
+
+Add appropriate Drizzle/PostgreSQL tables or versioned JSONB schemas for:
+
+* Household profile.
+* Service requirements.
+* Current deals.
+* Field provenance and confirmation status.
+* Document extraction metadata without retaining original documents.
+* Questionnaire schema version.
+
+Add automated tests covering:
+
+* Conditional EV questions.
+* Sky TV and Sky Mobile bundle questions.
+* Missing required information blocking research.
+* Unknown values not being guessed.
+* Document type and size rejection.
+* Extracted values remaining unconfirmed.
+* Research using confirmed values only.
+* Original document bytes not being retained.
+* `store: false` being sent on extraction calls.
+* The application remaining unable to transact, apply, cancel or make payments.
+
+Do not remove or weaken any requirements from the previous hardening prompt. Before publishing, report the files changed, database migration created, tests run, test results and any remaining limitations.
