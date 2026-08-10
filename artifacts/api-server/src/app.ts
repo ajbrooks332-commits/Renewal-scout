@@ -99,22 +99,14 @@ app.use(sessionMiddleware);
 // CSRF / Origin validation on all mutation routes
 app.use("/api", csrfProtection);
 
-// ─── Public source download (no auth) ────────────────────────────────────────
-// Temporary route for downloading the source code export.
-// Served before the auth-protected /api routes.
+// ─── Public source download (no auth, no CSRF) ───────────────────────────────
+// Must be registered BEFORE csrfProtection and the /api router.
 import { readFileSync, existsSync } from "fs";
-import { resolve, dirname } from "path";
-import { fileURLToPath } from "url";
 
-app.get("/download-source", (_req, res) => {
-  const candidates = [
-    resolve(dirname(fileURLToPath(import.meta.url)), "../../renewal-scout-export.txt"),
-    resolve(process.cwd(), "../../renewal-scout-export.txt"),
-    "/home/runner/workspace/renewal-scout-export.txt",
-  ];
-  const filePath = candidates.find(existsSync);
-  if (!filePath) {
-    res.status(404).send("Source export not found. Please regenerate it.");
+app.get("/api/download-source", (_req, res) => {
+  const filePath = "/home/runner/workspace/renewal-scout-export.txt";
+  if (!existsSync(filePath)) {
+    res.status(404).send("Source export not found.");
     return;
   }
   const content = readFileSync(filePath, "utf8");
