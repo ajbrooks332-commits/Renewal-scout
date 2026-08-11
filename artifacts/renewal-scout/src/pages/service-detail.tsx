@@ -10,7 +10,7 @@ import { AppLayout } from "@/components/layout";
 import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  ChevronLeft, Pencil, Trash2, Search, ExternalLink, ShieldCheck,
+  ChevronLeft, Pencil, Archive, Search, ExternalLink, ShieldCheck,
   AlertTriangle, CheckSquare, Info, FileText, ChevronDown, Clock,
   Settings, CreditCard, XCircle, Loader2
 } from "lucide-react";
@@ -179,10 +179,10 @@ export default function ServiceDetailPage() {
   };
 
   const handleArchive = () => {
-    if (confirm("Are you sure you want to delete this service?")) {
+    if (confirm("Are you sure you want to archive this service? It will be hidden from your dashboard.")) {
       archiveService.mutate({ id }, {
         onSuccess: () => {
-          toast({ title: "Service deleted" });
+          toast({ title: "Service archived" });
           setLocation("/");
         }
       });
@@ -216,9 +216,9 @@ export default function ServiceDetailPage() {
             <Pencil className="h-4 w-4" />
             Edit
           </Button>
-          <Button variant="outline" size="sm" onClick={handleArchive} className="gap-2 text-destructive hover:text-destructive hover:bg-destructive/5">
-            <Trash2 className="h-4 w-4" />
-            Delete
+          <Button variant="outline" size="sm" onClick={handleArchive} className="gap-2 text-muted-foreground hover:text-foreground">
+            <Archive className="h-4 w-4" />
+            Archive
           </Button>
         </div>
       </div>

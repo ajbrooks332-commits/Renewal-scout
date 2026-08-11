@@ -59,12 +59,17 @@ function passwordsMatch(candidate: string, stored: string): boolean {
   return match && bufA.length === bufB.length;
 }
 
-// GET /auth/me — returns auth status, setup warnings, and scheduler state
+// GET /auth/me — returns auth status and (post-auth only) setup warnings
+// Setup warnings are only returned to authenticated users to avoid leaking
+// configuration details (missing secrets, disabled scheduler) to anonymous callers.
 router.get("/auth/me", (req, res): void => {
+  const isAuthenticated = req.session?.authenticated === true;
   res.json({
-    authenticated: req.session?.authenticated === true,
+    authenticated: isAuthenticated,
     schedulerEnabled: isSchedulerEnabled(),
-    setupWarnings: getSetupWarnings(),
+    // Only expose setup warnings after authentication — prevents information
+    // disclosure to unauthenticated callers about which secrets are missing.
+    setupWarnings: isAuthenticated ? getSetupWarnings() : [],
   });
 });
 

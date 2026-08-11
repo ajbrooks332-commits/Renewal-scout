@@ -102,29 +102,59 @@ function ManualDealEditor({
   onSaved: () => void;
 }) {
   const { toast } = useToast();
+
+  // Initialise from both user-entered AND confirmed-extracted values so the
+  // editor shows all known data (not just what the user previously typed).
   const [local, setLocal] = useState<Record<string, unknown>>(() => {
     const out: Record<string, unknown> = {};
     for (const { key } of FIELD_DEFS) {
       const pf = fields[key];
-      if (pf?.source === "user") out[key] = pf.value;
+      if (pf?.source === "user" || pf?.source === "extracted_confirmed") {
+        out[key] = pf.value;
+      }
     }
     return out;
   });
+
+  // Track which fields the user has actually edited.  Only touched fields are
+  // included in the save payload so that untouched "extracted_confirmed" fields
+  // retain their provenance on the server — they are not silently upgraded to
+  // "user" source just because the editor was opened.
+  const [touched, setTouched] = useState<Set<string>>(new Set());
+
   const save = useUpdateCurrentDeal();
 
+  function handleChange(key: string, type: FieldEntry["type"], rawValue: string) {
+    setTouched((t) => { const n = new Set(t); n.add(key); return n; });
+    let parsed: unknown;
+    if (rawValue === "") {
+      parsed = null;
+    } else if (type === "number") {
+      const n = parseFloat(rawValue);
+      parsed = isNaN(n) ? null : n;
+    } else {
+      parsed = rawValue;
+    }
+    setLocal((l) => ({ ...l, [key]: parsed }));
+  }
+
   function handleSave() {
-    // New API: send values (field→raw value) + clear (keys to remove).
-    // Server always assigns source: "user" — we never set provenance client-side.
+    // Only include fields the user actually touched.
+    // Untouched fields (even if pre-populated from extracted_confirmed) are
+    // omitted — the server preserves their existing source/provenance.
     const values: Record<string, unknown> = {};
     const clear: string[] = [];
 
-    for (const { key } of FIELD_DEFS) {
+    for (const { key, type } of FIELD_DEFS) {
+      if (!touched.has(key)) continue; // preserve server-side provenance
+
       const val = local[key];
       const hasValue = val !== null && val !== undefined && String(val).trim() !== "";
       if (hasValue) {
-        values[key] = val;
-      } else if (fields[key]?.source === "user") {
-        // Field was user-entered but now cleared → request removal
+        // Ensure numbers are sent as numbers, not strings
+        values[key] = type === "number" ? Number(val) : val;
+      } else {
+        // User cleared a field they touched → request removal
         clear.push(key);
       }
     }
@@ -146,24 +176,38 @@ function ManualDealEditor({
 
   return (
     <div className="space-y-4">
-      {FIELD_DEFS.map(({ key, label, type, placeholder }) => (
-        <div key={key}>
-          <Label className="text-sm font-medium">{label}</Label>
-          <Input
-            type={type === "number" ? "number" : type === "date" ? "date" : "text"}
-            placeholder={placeholder ?? "Leave blank if unknown"}
-            value={(local[key] as string | number | undefined) ?? ""}
-            onChange={(e) => setLocal((l) => ({ ...l, [key]: e.target.value || null }))}
-            className="mt-1"
-          />
-          {fields[key] && fields[key]!.source !== "user" && (
-            <div className="mt-1"><ProvenanceBadge source={fields[key]!.source} /></div>
-          )}
-        </div>
-      ))}
+      {FIELD_DEFS.map(({ key, label, type, placeholder }) => {
+        const existing = fields[key];
+        const isTouched = touched.has(key);
+        return (
+          <div key={key}>
+            <Label className="text-sm font-medium">{label}</Label>
+            <Input
+              type={type === "number" ? "number" : type === "date" ? "date" : "text"}
+              placeholder={placeholder ?? "Leave blank if unknown"}
+              value={(local[key] as string | number | undefined) ?? ""}
+              onChange={(e) => handleChange(key, type, e.target.value)}
+              className="mt-1"
+            />
+            <div className="mt-1 flex items-center gap-2">
+              {/* Show provenance badge for pre-populated fields */}
+              {existing && !isTouched && existing.source !== "user" && (
+                <ProvenanceBadge source={existing.source} />
+              )}
+              {/* Once touched, indicate this field will be saved as user-entered */}
+              {isTouched && (
+                <span className="text-xs text-muted-foreground italic">edited — will save as user-entered</span>
+              )}
+            </div>
+          </div>
+        );
+      })}
       <Button onClick={handleSave} disabled={save.isPending} className="gap-2">
         {save.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
         Save Deal Details
+        {touched.size > 0 && (
+          <span className="ml-1 text-xs opacity-75">({touched.size} changed)</span>
+        )}
       </Button>
     </div>
   );

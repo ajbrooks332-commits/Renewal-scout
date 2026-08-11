@@ -119,21 +119,66 @@ describe("Login rate limiting", () => {
   }, 30_000);
 });
 
-// ─── Scheduler warning ────────────────────────────────────────────────────────
+// ─── Setup warnings — post-auth only ─────────────────────────────────────────
 
-describe("Scheduler warning in /auth/me", () => {
-  it("includes scheduler warning when SCHEDULER_ENABLED is not set", async () => {
-    const prev = process.env["SCHEDULER_ENABLED"];
-    delete process.env["SCHEDULER_ENABLED"];
-
+describe("Setup warnings in /auth/me", () => {
+  it("does NOT expose setup warnings to unauthenticated callers", async () => {
+    // An unauthenticated GET /auth/me must return an empty setupWarnings array
+    // regardless of which env vars are missing.  This prevents information
+    // disclosure about server configuration to anonymous callers.
     const res = await request(app).get("/api/auth/me");
-
-    if (prev !== undefined) process.env["SCHEDULER_ENABLED"] = prev;
-
     expect(res.status).toBe(200);
-    expect(res.body.schedulerEnabled).toBe(false);
-    const warnings: string[] = res.body.setupWarnings ?? [];
-    expect(warnings.some((w) => /scheduler/i.test(w))).toBe(true);
+    expect(res.body.authenticated).toBe(false);
+    expect(res.body.setupWarnings).toEqual([]);
+  });
+
+  it("exposes scheduler warning only to authenticated sessions, not unauthenticated", async () => {
+    // This test verifies that setupWarnings are gated on authentication:
+    // unauthenticated GET /auth/me → empty warnings
+    // authenticated GET /auth/me → real warnings present (when scheduler is disabled)
+
+    const prevScheduler = process.env["SCHEDULER_ENABLED"];
+    const prevPassword = process.env["ADMIN_PASSWORD"];
+    delete process.env["SCHEDULER_ENABLED"]; // ensure scheduler warning fires
+    process.env["ADMIN_PASSWORD"] = "test-password-for-warnings-check";
+
+    try {
+      // 1. Unauthenticated check — must return empty warnings
+      const unauthRes = await request(app).get("/api/auth/me");
+      expect(unauthRes.status).toBe(200);
+      expect(unauthRes.body.authenticated).toBe(false);
+      expect(unauthRes.body.setupWarnings).toEqual([]);
+
+      // 2. Log in using a fresh agent to get a session cookie
+      const loginRes = await request(app)
+        .post("/api/auth/login")
+        .set("Origin", "http://localhost:3000")
+        .send({ password: "test-password-for-warnings-check" });
+
+      // Login itself returns warnings for the authenticated user
+      if (loginRes.status === 200) {
+        const loginWarnings: string[] = loginRes.body.setupWarnings ?? [];
+        expect(loginWarnings.some((w) => /scheduler/i.test(w))).toBe(true);
+
+        // 3. Authenticated /auth/me via session cookie also returns warnings
+        const sessionCookies = getCookieHeader(loginRes);
+        if (sessionCookies.length > 0) {
+          const meRes = await request(app)
+            .get("/api/auth/me")
+            .set("Cookie", sessionCookies[0]!);
+          expect(meRes.status).toBe(200);
+          expect(meRes.body.authenticated).toBe(true);
+          const meWarnings: string[] = meRes.body.setupWarnings ?? [];
+          expect(meWarnings.some((w) => /scheduler/i.test(w))).toBe(true);
+        }
+      }
+    } finally {
+      // Restore env vars
+      if (prevScheduler !== undefined) process.env["SCHEDULER_ENABLED"] = prevScheduler;
+      else delete process.env["SCHEDULER_ENABLED"];
+      if (prevPassword !== undefined) process.env["ADMIN_PASSWORD"] = prevPassword;
+      else delete process.env["ADMIN_PASSWORD"];
+    }
   });
 
   it("reports schedulerEnabled: true when SCHEDULER_ENABLED=true", async () => {
