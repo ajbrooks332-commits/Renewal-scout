@@ -28,6 +28,7 @@ vi.mock("@workspace/db", async (importOriginal) => {
       set: () => chain,
       values: () => chain,
       onConflictDoNothing: () => chain,
+      onConflictDoUpdate: () => chain,
       // Terminal methods that return a real Promise
       limit: () => resolved,
       returning: () => resolved,

@@ -71,10 +71,15 @@ export function calculateNextResearchDate(
   return proposedStr < target ? proposedStr : target;
 }
 
+/**
+ * Returns the effective annual cost in GBP (decimal), derived from
+ * the integer-pence columns stored in the database.
+ * Returns null if neither cost is set.
+ */
 export function effectiveAnnualCost(service: Service): number | null {
-  if (service.annualCostGbp !== null && service.annualCostGbp !== undefined)
-    return service.annualCostGbp;
-  if (service.monthlyCostGbp !== null && service.monthlyCostGbp !== undefined)
-    return service.monthlyCostGbp * 12;
+  if (service.annualCostPence !== null && service.annualCostPence !== undefined)
+    return service.annualCostPence / 100;
+  if (service.monthlyCostPence !== null && service.monthlyCostPence !== undefined)
+    return (service.monthlyCostPence * 12) / 100;
   return null;
 }

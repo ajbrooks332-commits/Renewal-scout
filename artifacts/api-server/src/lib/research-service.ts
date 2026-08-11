@@ -203,8 +203,11 @@ function buildPrompt(service: Service, ctx: ResearchContext): string {
     service_type: service.serviceType,
     current_provider: service.provider,
     current_product: service.productName ?? null,
-    monthly_cost_gbp: service.monthlyCostGbp ?? null,
-    annual_cost_gbp: service.annualCostGbp ?? null,
+    // Convert stored pence to GBP decimal for the research prompt
+    monthly_cost_gbp: service.monthlyCostPence !== null && service.monthlyCostPence !== undefined
+      ? service.monthlyCostPence / 100 : null,
+    annual_cost_gbp: service.annualCostPence !== null && service.annualCostPence !== undefined
+      ? service.annualCostPence / 100 : null,
     renewal_date: service.renewalDate ?? null,
     contract_end_date: service.contractEndDate ?? null,
     notice_days: service.noticeDays,
@@ -555,8 +558,11 @@ export function serviceToApi(service: Service): Record<string, unknown> {
     serviceType: service.serviceType,
     provider: service.provider,
     productName: service.productName ?? null,
-    monthlyCostGbp: service.monthlyCostGbp ?? null,
-    annualCostGbp: service.annualCostGbp ?? null,
+    // Pence → GBP decimal for API consumers
+    monthlyCostGbp: service.monthlyCostPence !== null && service.monthlyCostPence !== undefined
+      ? service.monthlyCostPence / 100 : null,
+    annualCostGbp: service.annualCostPence !== null && service.annualCostPence !== undefined
+      ? service.annualCostPence / 100 : null,
     effectiveAnnualCostGbp: effectiveAnnualCost(service),
     renewalDate: service.renewalDate ?? null,
     contractEndDate: service.contractEndDate ?? null,

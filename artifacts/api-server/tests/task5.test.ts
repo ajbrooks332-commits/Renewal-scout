@@ -60,6 +60,7 @@ function makeChain<T>(resolveWith: T): any {
     set: () => chain,
     values: () => chain,
     onConflictDoNothing: () => chain,
+    onConflictDoUpdate: () => chain,
     limit: () => resolved,
     returning: () => resolved,
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -465,28 +466,33 @@ describe("PUT /api/household-profile — partial PATCH semantics", () => {
 
   it("persists only the supplied field, leaving other columns untouched", async () => {
     const { db } = await import("@workspace/db");
-    const existingProfile = {
-      id: 1, postcode: "EC1A1BB", propertyType: "flat", tenure: "owner",
-      bedrooms: 2, yearBuilt: 1995, numAdults: 2, numChildren: 0,
-      heatingType: "gas", hasEv: false, evChargerType: null,
-      hasSolar: false, solarExportTariff: null,
-      annualElectricityKwh: 3000, annualGasKwh: 12000,
-      hasSkyTv: false, hasSkyMobile: false, hasVirginMedia: false,
-      numCars: 1, carMake: "Toyota", carModel: "Corolla", carYear: 2019,
-      carValue: 12000, annualMileage: 8000, drivingExperience: "10 years",
-      claimsLast5Years: 0, smoker: false,
+    // The upserted row the DB returns after INSERT … ON CONFLICT DO UPDATE
+    const upsertedProfile = {
+      id: 1, postcode: "SW1A1AA", propertyType: null, tenure: null,
+      bedrooms: null, yearBuilt: null, numAdults: null, numChildren: null,
+      heatingType: null, hasEv: null, evChargerType: null,
+      hasSolar: null, solarExportTariff: null,
+      annualElectricityKwh: null, annualGasKwh: null,
+      hasSkyTv: null, hasSkyMobile: null, hasVirginMedia: null,
+      numCars: null, carMake: null, carModel: null, carYear: null,
+      carValuePence: null, annualMileage: null, drivingExperience: null,
+      claimsLast5Years: null, smoker: null,
       accessibilityNeeds: null, generalPreferences: null,
       questionnaireVersion: "1",
       updatedAt: new Date(), createdAt: new Date(),
     };
 
-    let capturedPatch: Record<string, unknown> = {};
-    vi.mocked(db.select).mockReturnValueOnce(makeChain([existingProfile])); // existing row
-    vi.mocked(db.update).mockReturnValueOnce({
-      set: vi.fn().mockImplementation((vals: Record<string, unknown>) => {
-        capturedPatch = vals;
-        // Drizzle merges: return a record that looks like the profile with the patch applied
-        return makeChain([{ ...existingProfile, ...vals, updatedAt: new Date() }]);
+    // Route uses INSERT … ON CONFLICT DO UPDATE (atomic upsert).
+    // Capture the set values passed to onConflictDoUpdate.
+    let capturedSet: Record<string, unknown> = {};
+    vi.mocked(db.insert).mockReturnValueOnce({
+      values: vi.fn().mockReturnValue({
+        onConflictDoUpdate: vi.fn().mockImplementation(({ set }: { set: Record<string, unknown> }) => {
+          capturedSet = set;
+          return {
+            returning: vi.fn().mockResolvedValue([upsertedProfile]),
+          };
+        }),
       }),
     } as never);
 
@@ -496,11 +502,11 @@ describe("PUT /api/household-profile — partial PATCH semantics", () => {
       .send({ postcode: "SW1A1AA" }); // only send one field
 
     expect(res.status).toBe(200);
-    // The patch object passed to Drizzle must NOT include other profile columns
-    expect(capturedPatch).toHaveProperty("postcode", "SW1A1AA");
-    // Critically, no other column was included in the patch — not even undefined
-    const patchKeys = Object.keys(capturedPatch);
-    expect(patchKeys.filter((k) => k !== "postcode" && k !== "updatedAt").length).toBe(0);
+    // The conflict-update set must contain only the supplied field + updatedAt
+    expect(capturedSet).toHaveProperty("postcode", "SW1A1AA");
+    // No other profile columns were included in the conflict update
+    const setKeys = Object.keys(capturedSet);
+    expect(setKeys.filter((k) => k !== "postcode" && k !== "updatedAt").length).toBe(0);
   });
 });
 

@@ -21,7 +21,9 @@ const SHORT_MAX = 80;
  *  - null / undefined  → stored as null  (explicit "I don't know")
  *  - any string        → trimmed, max-clamped; empty string → null
  *  - any number        → coerced; NaN → null
- *  - any boolean       → coerced
+ *  - any boolean       → coerced via strict check (only actual booleans/0/1)
+ *
+ * Monetary inputs (carValueGbp) arrive as GBP and are stored as integer pence.
  */
 function sanitiseProfile(body: Record<string, unknown>): Record<string, unknown> {
   const result: Record<string, unknown> = {};
@@ -37,13 +39,24 @@ function sanitiseProfile(body: Record<string, unknown>): Record<string, unknown>
     const v = body[key];
     if (v === null || v === undefined) { result[key] = null; return; }
     const num = Number(v);
-    result[key] = isNaN(num) ? null : num;
+    result[key] = isNaN(num) ? null : Math.round(num);
   };
   const b = (key: string): void => {
     if (!(key in body)) return;
     const v = body[key];
     if (v === null || v === undefined) { result[key] = null; return; }
     result[key] = Boolean(v);
+  };
+  /**
+   * Accept a GBP decimal value (e.g. 20000.00) and store as integer pence.
+   * The result key in the returned object is the Drizzle column name.
+   */
+  const money = (bodyKey: string, dbKey: string): void => {
+    if (!(bodyKey in body)) return;
+    const v = body[bodyKey];
+    if (v === null || v === undefined) { result[dbKey] = null; return; }
+    const num = Number(v);
+    result[dbKey] = isNaN(num) ? null : Math.round(num * 100);
   };
 
   s("postcode", POSTCODE_MAX);
@@ -67,7 +80,8 @@ function sanitiseProfile(body: Record<string, unknown>): Record<string, unknown>
   s("carMake", SHORT_MAX);
   s("carModel", SHORT_MAX);
   n("carYear");
-  n("carValue");
+  // carValue from API is in GBP; stored as pence in carValuePence
+  money("carValue", "carValuePence");
   n("annualMileage");
   s("drivingExperience");
   n("claimsLast5Years");
@@ -102,7 +116,10 @@ function profileToApi(row: typeof householdProfileTable.$inferSelect) {
     carMake: row.carMake ?? null,
     carModel: row.carModel ?? null,
     carYear: row.carYear ?? null,
-    carValue: row.carValue ?? null,
+    // carValuePence stored as integer pence; return as GBP decimal to API consumers
+    carValue: row.carValuePence !== null && row.carValuePence !== undefined
+      ? row.carValuePence / 100
+      : null,
     annualMileage: row.annualMileage ?? null,
     drivingExperience: row.drivingExperience ?? null,
     claimsLast5Years: row.claimsLast5Years ?? null,
@@ -140,11 +157,14 @@ router.get("/household-profile", async (_req, res): Promise<void> => {
   res.json(profileToApi(row));
 });
 
-// PUT /household-profile — partial upsert (PATCH semantics)
+// PUT /household-profile — partial upsert (PATCH semantics, singleton id=1)
 //
 // Only fields that are present in the request body are written. Omitting a
 // field preserves whatever value was previously stored for it. To explicitly
 // clear a field, send it as null.
+//
+// Uses INSERT … ON CONFLICT (id) DO UPDATE SET … to atomically upsert the
+// singleton row (id=1). Never runs an unqualified UPDATE.
 router.put("/household-profile", async (req, res): Promise<void> => {
   const body = req.body as Record<string, unknown>;
   const patch = sanitiseProfile(body);
@@ -154,25 +174,30 @@ router.put("/household-profile", async (req, res): Promise<void> => {
     return;
   }
 
-  const [existing] = await db.select().from(householdProfileTable).limit(1);
+  // Always target id=1 (the singleton row).
+  const insertValues = { id: 1, ...patch };
 
-  if (existing) {
-    // Merge patch into existing row — untouched columns are preserved
-    const [updated] = await db
-      .update(householdProfileTable)
-      .set({ ...patch, updatedAt: new Date() })
-      .returning();
-    logger.info({ keys: Object.keys(patch) }, "Household profile updated (partial)");
-    res.json(profileToApi(updated!));
-  } else {
-    const [created] = await db
-      .insert(householdProfileTable)
+  // Build the ON CONFLICT update — only update columns present in patch.
+  const conflictUpdate: Record<string, unknown> = { ...patch, updatedAt: new Date() };
+
+  const [upserted] = await db
+    .insert(householdProfileTable)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    .values(insertValues as any)
+    .onConflictDoUpdate({
+      target: householdProfileTable.id,
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .values(patch as any)
-      .returning();
-    logger.info({ keys: Object.keys(patch) }, "Household profile created");
-    res.json(profileToApi(created!));
+      set: conflictUpdate as any,
+    })
+    .returning();
+
+  if (!upserted) {
+    res.status(500).json({ error: "Failed to upsert household profile." });
+    return;
   }
+
+  logger.info({ keys: Object.keys(patch) }, "Household profile upserted (id=1)");
+  res.json(profileToApi(upserted));
 });
 
 export default router;

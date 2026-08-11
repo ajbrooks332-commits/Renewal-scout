@@ -27,6 +27,16 @@ function parseId(raw: string | string[] | undefined): number | null {
   return isNaN(n) ? null : n;
 }
 
+/**
+ * Convert a GBP decimal value to integer pence for storage.
+ * Returns null if the input is null/undefined/NaN.
+ */
+function gbpToPence(v: unknown): number | null {
+  if (v === null || v === undefined) return null;
+  const n = typeof v === "number" ? v : parseFloat(String(v));
+  return isNaN(n) ? null : Math.round(n * 100);
+}
+
 function buildServiceValues(data: Record<string, unknown>) {
   // Trim short text fields before storing
   const trimmed = trimServiceInput(data);
@@ -35,10 +45,9 @@ function buildServiceValues(data: Record<string, unknown>) {
     provider: (trimmed["provider"] as string) ?? "",
     productName:
       (trimmed["productName"] as string | null | undefined) ?? null,
-    monthlyCostGbp:
-      (trimmed["monthlyCostGbp"] as number | null | undefined) ?? null,
-    annualCostGbp:
-      (trimmed["annualCostGbp"] as number | null | undefined) ?? null,
+    // API accepts GBP decimal; stored as integer pence
+    monthlyCostPence: gbpToPence(trimmed["monthlyCostGbp"]),
+    annualCostPence: gbpToPence(trimmed["annualCostGbp"]),
     renewalDate:
       (trimmed["renewalDate"] as string | null | undefined) ?? null,
     contractEndDate:
