@@ -67,15 +67,17 @@ export const StrictUpdateServiceBody = StrictCreateServiceBody;
  * then come back later to enter make/model). The completeness check decides
  * whether the data is sufficient for personalised research.
  */
-export const VehicleInput = z.object({
-  make:              z.string().max(100).nullable().optional(),
-  model:             z.string().max(100).nullable().optional(),
-  year:              z.number().int().min(1900).max(2030).nullable().optional(),
-  valuePence:        NonnegativeInt.nullable().optional(),
-  annualMileage:     NonnegativeInt.nullable().optional(),
-  drivingExperience: z.enum(["new_driver", "lt5yrs", "5_10yrs", "10plus"]).nullable().optional(),
-  claimsLast5Years:  NonnegativeInt.max(20).nullable().optional(),
-});
+export const VehicleInput = z
+  .object({
+    make:              z.string().max(100).nullable().optional(),
+    model:             z.string().max(100).nullable().optional(),
+    year:              z.number().int().min(1900).max(2030).nullable().optional(),
+    valuePence:        NonnegativeInt.nullable().optional(),
+    annualMileage:     NonnegativeInt.nullable().optional(),
+    drivingExperience: z.enum(["new_driver", "lt5yrs", "5_10yrs", "10plus"]).nullable().optional(),
+    claimsLast5Years:  NonnegativeInt.max(20).nullable().optional(),
+  })
+  .strict();
 
 export type VehicleInput = z.infer<typeof VehicleInput>;
 

@@ -131,24 +131,32 @@ END
 $$;
 --> statement-breakpoint
 
--- Rename GBP columns to pence if the old names still exist
--- (handles databases created before the 0002 pence migration)
+-- Reconcile old and new car-value columns. If both exist, preserve the new
+-- pence value where present and backfill it from the legacy GBP value.
 DO $$
 BEGIN
-  -- car_value: rename car_value_gbp → car_value_pence if needed
   IF EXISTS (
     SELECT 1 FROM information_schema.columns
     WHERE table_schema = 'public' AND table_name = 'household_profile'
       AND column_name = 'car_value_gbp'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'household_profile'
-      AND column_name = 'car_value_pence'
   ) THEN
-    ALTER TABLE household_profile RENAME COLUMN car_value_gbp TO car_value_pence;
-    -- Convert from GBP (real) to pence (integer) — multiply by 100
-    ALTER TABLE household_profile ALTER COLUMN car_value_pence TYPE integer
-      USING ROUND(car_value_pence * 100)::integer;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'household_profile'
+        AND column_name = 'car_value_pence'
+    ) THEN
+      UPDATE household_profile
+        SET car_value_pence = COALESCE(
+          car_value_pence,
+          ROUND(car_value_gbp::numeric * 100)::integer
+        );
+      ALTER TABLE household_profile DROP COLUMN car_value_gbp;
+    ELSE
+      ALTER TABLE household_profile RENAME COLUMN car_value_gbp TO car_value_pence;
+      ALTER TABLE household_profile ALTER COLUMN car_value_pence TYPE integer
+        USING CASE WHEN car_value_pence IS NULL THEN NULL
+                   ELSE ROUND(car_value_pence::numeric * 100)::integer END;
+    END IF;
   END IF;
 END
 $$;
@@ -252,6 +260,74 @@ END
 $$;
 --> statement-breakpoint
 
+-- Reconcile old and new service-cost columns before adding constraints that
+-- reference the pence columns. This also handles partially migrated databases
+-- where both versions of a column exist.
+DO $$
+BEGIN
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'services'
+      AND column_name = 'monthly_cost_gbp'
+  ) THEN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'services'
+        AND column_name = 'monthly_cost_pence'
+    ) THEN
+      UPDATE services
+        SET monthly_cost_pence = COALESCE(
+          monthly_cost_pence,
+          ROUND(monthly_cost_gbp::numeric * 100)::integer
+        );
+      ALTER TABLE services DROP COLUMN monthly_cost_gbp;
+    ELSE
+      ALTER TABLE services RENAME COLUMN monthly_cost_gbp TO monthly_cost_pence;
+      ALTER TABLE services ALTER COLUMN monthly_cost_pence TYPE integer
+        USING CASE WHEN monthly_cost_pence IS NULL THEN NULL
+                   ELSE ROUND(monthly_cost_pence::numeric * 100)::integer END;
+    END IF;
+  ELSIF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'services'
+      AND column_name = 'monthly_cost_pence'
+  ) THEN
+    ALTER TABLE services ADD COLUMN monthly_cost_pence integer;
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'services'
+      AND column_name = 'annual_cost_gbp'
+  ) THEN
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'services'
+        AND column_name = 'annual_cost_pence'
+    ) THEN
+      UPDATE services
+        SET annual_cost_pence = COALESCE(
+          annual_cost_pence,
+          ROUND(annual_cost_gbp::numeric * 100)::integer
+        );
+      ALTER TABLE services DROP COLUMN annual_cost_gbp;
+    ELSE
+      ALTER TABLE services RENAME COLUMN annual_cost_gbp TO annual_cost_pence;
+      ALTER TABLE services ALTER COLUMN annual_cost_pence TYPE integer
+        USING CASE WHEN annual_cost_pence IS NULL THEN NULL
+                   ELSE ROUND(annual_cost_pence::numeric * 100)::integer END;
+    END IF;
+  ELSIF NOT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'services'
+      AND column_name = 'annual_cost_pence'
+  ) THEN
+    ALTER TABLE services ADD COLUMN annual_cost_pence integer;
+  END IF;
+END
+$$;
+--> statement-breakpoint
+
 -- ────────────────────────────────────────────────────────────────────────────
 -- 4. services CHECK constraints
 -- ────────────────────────────────────────────────────────────────────────────
@@ -309,42 +385,6 @@ BEGIN
     ALTER TABLE services
       ADD CONSTRAINT services_annual_cost_nonneg
         CHECK (annual_cost_pence IS NULL OR annual_cost_pence >= 0);
-  END IF;
-END
-$$;
---> statement-breakpoint
-
--- Rename GBP columns to pence (pre-0002 databases)
-DO $$
-BEGIN
-  -- monthly_cost_gbp → monthly_cost_pence
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'services'
-      AND column_name = 'monthly_cost_gbp'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'services'
-      AND column_name = 'monthly_cost_pence'
-  ) THEN
-    ALTER TABLE services RENAME COLUMN monthly_cost_gbp TO monthly_cost_pence;
-    ALTER TABLE services ALTER COLUMN monthly_cost_pence TYPE integer
-      USING ROUND(monthly_cost_pence * 100)::integer;
-  END IF;
-
-  -- annual_cost_gbp → annual_cost_pence
-  IF EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'services'
-      AND column_name = 'annual_cost_gbp'
-  ) AND NOT EXISTS (
-    SELECT 1 FROM information_schema.columns
-    WHERE table_schema = 'public' AND table_name = 'services'
-      AND column_name = 'annual_cost_pence'
-  ) THEN
-    ALTER TABLE services RENAME COLUMN annual_cost_gbp TO annual_cost_pence;
-    ALTER TABLE services ALTER COLUMN annual_cost_pence TYPE integer
-      USING ROUND(annual_cost_pence * 100)::integer;
   END IF;
 END
 $$;
@@ -420,19 +460,25 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.table_constraints
     WHERE table_schema = 'public' AND table_name = 'current_deals'
-      AND constraint_type = 'UNIQUE'
+      AND constraint_name = 'current_deals_service_id_unique'
   ) THEN
     -- Deduplicate before adding constraint: keep the most recently updated row
-    -- per service_id.
+    -- per service_id. id breaks timestamp ties deterministically.
     DELETE FROM current_deals cd
       USING (
-        SELECT service_id, MAX(updated_at) AS keep_ts
-        FROM current_deals
-        GROUP BY service_id
-        HAVING COUNT(*) > 1
+        SELECT id
+        FROM (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY service_id
+              ORDER BY updated_at DESC NULLS LAST, id DESC
+            ) AS row_rank
+          FROM current_deals
+        ) ranked
+        WHERE row_rank > 1
       ) dup
-      WHERE cd.service_id = dup.service_id
-        AND cd.updated_at < dup.keep_ts;
+      WHERE cd.id = dup.id;
     ALTER TABLE current_deals
       ADD CONSTRAINT current_deals_service_id_unique UNIQUE (service_id);
   END IF;
@@ -449,18 +495,24 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.table_constraints
     WHERE table_schema = 'public' AND table_name = 'service_requirements'
-      AND constraint_type = 'UNIQUE'
+      AND constraint_name = 'service_requirements_service_id_unique'
   ) THEN
-    -- Deduplicate before adding constraint
+    -- Deduplicate before adding constraint. id breaks timestamp ties.
     DELETE FROM service_requirements sr
       USING (
-        SELECT service_id, MAX(updated_at) AS keep_ts
-        FROM service_requirements
-        GROUP BY service_id
-        HAVING COUNT(*) > 1
+        SELECT id
+        FROM (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY service_id
+              ORDER BY updated_at DESC NULLS LAST, id DESC
+            ) AS row_rank
+          FROM service_requirements
+        ) ranked
+        WHERE row_rank > 1
       ) dup
-      WHERE sr.service_id = dup.service_id
-        AND sr.updated_at < dup.keep_ts;
+      WHERE sr.id = dup.id;
     ALTER TABLE service_requirements
       ADD CONSTRAINT service_requirements_service_id_unique UNIQUE (service_id);
   END IF;
@@ -471,6 +523,29 @@ $$;
 -- ────────────────────────────────────────────────────────────────────────────
 -- 9. Partial UNIQUE index for active research runs (one per service)
 -- ────────────────────────────────────────────────────────────────────────────
+
+-- Reconcile pre-existing duplicate active runs before creating the index. Keep
+-- one running job in preference to a queued job, then the newest job. Older
+-- duplicates are retained for audit but marked failed so they cannot execute.
+WITH ranked_active_runs AS (
+  SELECT
+    id,
+    ROW_NUMBER() OVER (
+      PARTITION BY service_id
+      ORDER BY (status = 'running') DESC, created_at DESC NULLS LAST, id DESC
+    ) AS row_rank
+  FROM research_runs
+  WHERE status IN ('queued', 'running')
+)
+UPDATE research_runs rr
+SET
+  status = 'failed',
+  error = COALESCE(rr.error, 'Superseded duplicate active research run during schema reconciliation.'),
+  completed_at = COALESCE(rr.completed_at, now())
+FROM ranked_active_runs ranked
+WHERE rr.id = ranked.id
+  AND ranked.row_rank > 1;
+--> statement-breakpoint
 
 CREATE UNIQUE INDEX IF NOT EXISTS research_runs_active_service_idx
   ON research_runs (service_id)

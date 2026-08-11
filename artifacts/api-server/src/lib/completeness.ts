@@ -116,7 +116,7 @@ const RECOMMENDED_FIELDS: Record<string, FieldGroup[]> = {
     { label: "Min. download speed (Mbps)",        source: "requirements", key: "downloadSpeedMbps",  destination: "requirements" },
   ],
   "Mobile phone": [
-    { label: "Minimum data per month (GB)", source: "requirements", key: "dataGb",           destination: "requirements" },
+    { label: "Minimum data per month (GB)", source: "requirements", key: "monthlyDataGb",    destination: "requirements" },
   ],
   "Credit card": [
     { label: "Primary use",                source: "requirements", key: "primaryUse",        destination: "requirements" },

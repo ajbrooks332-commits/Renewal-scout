@@ -345,7 +345,7 @@ const ExtractionOutputSchema = z.object({
   balanceGbp: z.number().nullable(),
   arrangementFeeGbp: z.number().nullable(),
   promoExpiryDate: z.string().nullable(),
-});
+}).strict();
 
 // Fields that the AI should return as strings (dates, text, enumerations)
 const EXTRACTION_STRING_FIELDS = new Set([
@@ -388,8 +388,6 @@ const EXTRACTION_SCHEMA = {
   additionalProperties: false,
 };
 
-// Maximum retry attempts for transient OpenAI errors
-const MAX_EXTRACT_RETRIES = 2;
 const OPENAI_TIMEOUT_MS = 45_000;
 
 router.post(
@@ -476,79 +474,63 @@ router.post(
     file.buffer = Buffer.alloc(0);
 
     let extractedValues: z.infer<typeof ExtractionOutputSchema> | null = null;
-    let lastError: unknown = null;
+    let extractionError: unknown = null;
 
-    for (let attempt = 0; attempt <= MAX_EXTRACT_RETRIES; attempt++) {
-      try {
-        const openai = new OpenAI({ apiKey });
-        const model = process.env["OPENAI_MODEL"] ?? "gpt-4o-mini";
-        const controller = new AbortController();
-        const timeoutHandle = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
+    try {
+      // Use one bounded retry layer. The OpenAI SDK performs at most two
+      // retries; there is no outer retry loop multiplying requests or cost.
+      const openai = new OpenAI({
+        apiKey,
+        maxRetries: 2,
+        timeout: OPENAI_TIMEOUT_MS,
+      });
+      const model = process.env["OPENAI_MODEL"] ?? "gpt-5.6-terra";
 
-        try {
-          const response = await openai.responses.create(
-            {
-              model,
-              store: false, // Do NOT retain the document on OpenAI servers
-              input: [
-                {
-                  role: "user",
-                  content: [
-                    documentContent,
-                    {
-                      type: "input_text",
-                      text: `You are extracting current deal information from a UK household service document
+      const response = await openai.responses.create({
+        model,
+        // Disables Responses application-state storage. Temporary abuse-
+        // monitoring retention may still apply under the account's data controls.
+        store: false,
+        input: [
+          {
+            role: "user",
+            content: [
+              documentContent,
+              {
+                type: "input_text",
+                text: `You are extracting current deal information from a UK household service document
 (bill, renewal letter, tariff confirmation, or similar). Extract only information
 you can see clearly. Set fields to null if not visible or unclear — do NOT guess.
 Service type: ${service.serviceType}, Provider: ${service.provider}.
 Return a JSON object matching the schema.`,
-                    },
-                  ],
-                },
-              ],
-              text: {
-                format: {
-                  type: "json_schema",
-                  name: "deal_extraction",
-                  schema: EXTRACTION_SCHEMA,
-                  strict: true,
-                },
               },
-            },
-            { signal: controller.signal },
-          );
+            ],
+          },
+        ],
+        text: {
+          format: {
+            type: "json_schema",
+            name: "deal_extraction",
+            schema: EXTRACTION_SCHEMA,
+            strict: true,
+          },
+        },
+      });
 
-          const outputText = response.output_text;
-          if (!outputText) throw new Error("No output from AI extraction.");
+      const outputText = response.output_text;
+      if (!outputText) throw new Error("No output from AI extraction.");
 
-          const parsedOutput = ExtractionOutputSchema.safeParse(
-            JSON.parse(outputText),
-          );
-          if (!parsedOutput.success)
-            throw new Error("AI extraction output failed schema validation.");
-
-          extractedValues = parsedOutput.data;
-          lastError = null;
-          break; // success
-        } finally {
-          clearTimeout(timeoutHandle);
-        }
-      } catch (err) {
-        lastError = err;
-        const isRetryable =
-          err instanceof Error &&
-          (err.message.includes("timeout") ||
-            err.message.includes("ECONNRESET") ||
-            err.message.includes("rate_limit") ||
-            err.name === "AbortError");
-        if (!isRetryable || attempt === MAX_EXTRACT_RETRIES) break;
-        // Brief back-off before retry
-        await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+      const parsedOutput = ExtractionOutputSchema.safeParse(JSON.parse(outputText));
+      if (!parsedOutput.success) {
+        throw new Error("AI extraction output failed schema validation.");
       }
+      extractedValues = parsedOutput.data;
+    } catch (err) {
+      extractionError = err;
     }
 
     if (!extractedValues) {
-      logger.error({ err: lastError, serviceId: id }, "Document extraction failed");
+      logger.error({ err: extractionError, serviceId: id }, "Document extraction failed");
       res.status(500).json({ error: "AI extraction failed. Please try again." });
       return;
     }

@@ -31,8 +31,8 @@ export const serviceRequirementsTable = pgTable("service_requirements", {
   schemaVersion: text("schema_version").notNull().default("1"),
   /**
    * Record<string, unknown | null> — null means "I don't know".
-   * Only keys listed in the server's KNOWN_FIELDS for the service type
-   * are stored; unknown keys are discarded at the API boundary.
+   * Keys and values are validated against the server's strict schema for the
+   * service type; invalid or unknown keys are rejected at the API boundary.
    */
   fields: jsonb("fields").notNull().default({}),
   /**

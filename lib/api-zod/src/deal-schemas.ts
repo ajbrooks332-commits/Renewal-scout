@@ -25,6 +25,15 @@ const OptPosInt = z.coerce.number().int().min(0).nullish();
 const OptDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, "Must be YYYY-MM-DD")
+  .refine((value) => {
+    const [year, month, day] = value.split("-").map(Number);
+    const parsed = new Date(year!, month! - 1, day!);
+    return (
+      parsed.getFullYear() === year &&
+      parsed.getMonth() === month! - 1 &&
+      parsed.getDate() === day
+    );
+  }, "Must be a valid calendar date")
   .nullish();
 
 // ── Common fields (all service types) ──────────────────────────────────────────

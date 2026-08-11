@@ -10,19 +10,21 @@
  *           current_deals, document_extractions
  *  0002  – Reconciliation: pence columns, DB constraints, push-provisioned
  *           database upgrade path
+ *  0003–0006 – Questionnaire, extraction and worker-queue upgrades
+ *  0007  – Full-schema safety reconciliation and duplicate cleanup
  *
  * ── Push-provisioned databases ────────────────────────────────────────────
  * Databases previously provisioned via `drizzle-kit push` have no Drizzle
- * migrations journal.  Migration 0002 handles the upgrade path safely using
+ * migrations journal.  Migrations 0002 and 0007 handle the upgrade path using
  * conditional DDL (IF NOT EXISTS / DO $$ ... EXCEPTION blocks), so Drizzle's
- * standard migrate() can run all three migrations without errors regardless
+ * standard migrate() can run the full sequence without errors regardless
  * of the prior database state.
  */
 
 import { migrate } from "drizzle-orm/node-postgres/migrator";
+import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { fileURLToPath } from "url";
 import path from "path";
-import { db, pool } from "./connection";
 
 // ── Migrations folder path ────────────────────────────────────────────────────
 //
@@ -47,6 +49,14 @@ export const migrationsFolder = isBundled
  * Safe to call on every startup — already-applied migrations are skipped.
  * Throws if the database is unavailable or a migration fails (fail-closed).
  */
-export async function runMigrations(): Promise<void> {
-  await migrate(db, { migrationsFolder });
+export async function runMigrations(
+  targetDatabase?: NodePgDatabase<any>,
+): Promise<void> {
+  // The optional target makes destructive integration tests genuinely isolated:
+  // they can pass a Drizzle instance connected to TEST_DATABASE_URL without
+  // importing or touching the application's DATABASE_URL-backed singleton.
+  const target =
+    targetDatabase ??
+    (await import("./connection")).db;
+  await migrate(target, { migrationsFolder });
 }

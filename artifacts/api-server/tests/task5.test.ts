@@ -126,6 +126,32 @@ describe("PUT /api/services/:id/requirements", () => {
       .send({ notFields: "oops" });
     expect(res.status).toBe(400);
   });
+
+  it("returns 400 for a mistyped service-specific field", async () => {
+    const { db } = await import("@workspace/db");
+    vi.mocked(db.select).mockReturnValueOnce(
+      makeChain([{ id: 1, serviceType: "Broadband" }])
+    );
+
+    const res = await request(app)
+      .put("/api/services/1/requirements")
+      .set("Cookie", authCookie)
+      .send({ fields: { linkedSkyTv: "true" } });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when unknownFields does not map to an explicit null", async () => {
+    const { db } = await import("@workspace/db");
+    vi.mocked(db.select).mockReturnValueOnce(
+      makeChain([{ id: 1, serviceType: "Broadband" }])
+    );
+
+    const res = await request(app)
+      .put("/api/services/1/requirements")
+      .set("Cookie", authCookie)
+      .send({ fields: {}, unknownFields: ["downloadSpeedMbps"] });
+    expect(res.status).toBe(400);
+  });
 });
 
 // ─── Current deals ────────────────────────────────────────────────────────────

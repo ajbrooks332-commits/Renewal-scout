@@ -17,10 +17,23 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'services'
       AND column_name = 'monthly_cost_gbp'
   ) THEN
-    ALTER TABLE services RENAME COLUMN monthly_cost_gbp TO monthly_cost_pence;
-    ALTER TABLE services ALTER COLUMN monthly_cost_pence TYPE integer
-      USING CASE WHEN monthly_cost_pence IS NULL THEN NULL
-                 ELSE ROUND(monthly_cost_pence::numeric * 100)::integer END;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'services'
+        AND column_name = 'monthly_cost_pence'
+    ) THEN
+      UPDATE services
+        SET monthly_cost_pence = COALESCE(
+          monthly_cost_pence,
+          ROUND(monthly_cost_gbp::numeric * 100)::integer
+        );
+      ALTER TABLE services DROP COLUMN monthly_cost_gbp;
+    ELSE
+      ALTER TABLE services RENAME COLUMN monthly_cost_gbp TO monthly_cost_pence;
+      ALTER TABLE services ALTER COLUMN monthly_cost_pence TYPE integer
+        USING CASE WHEN monthly_cost_pence IS NULL THEN NULL
+                   ELSE ROUND(monthly_cost_pence::numeric * 100)::integer END;
+    END IF;
   END IF;
 END
 $$;
@@ -34,10 +47,23 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'services'
       AND column_name = 'annual_cost_gbp'
   ) THEN
-    ALTER TABLE services RENAME COLUMN annual_cost_gbp TO annual_cost_pence;
-    ALTER TABLE services ALTER COLUMN annual_cost_pence TYPE integer
-      USING CASE WHEN annual_cost_pence IS NULL THEN NULL
-                 ELSE ROUND(annual_cost_pence::numeric * 100)::integer END;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'services'
+        AND column_name = 'annual_cost_pence'
+    ) THEN
+      UPDATE services
+        SET annual_cost_pence = COALESCE(
+          annual_cost_pence,
+          ROUND(annual_cost_gbp::numeric * 100)::integer
+        );
+      ALTER TABLE services DROP COLUMN annual_cost_gbp;
+    ELSE
+      ALTER TABLE services RENAME COLUMN annual_cost_gbp TO annual_cost_pence;
+      ALTER TABLE services ALTER COLUMN annual_cost_pence TYPE integer
+        USING CASE WHEN annual_cost_pence IS NULL THEN NULL
+                   ELSE ROUND(annual_cost_pence::numeric * 100)::integer END;
+    END IF;
   END IF;
 END
 $$;
@@ -51,10 +77,23 @@ BEGIN
     WHERE table_schema = 'public' AND table_name = 'household_profile'
       AND column_name = 'car_value_gbp'
   ) THEN
-    ALTER TABLE household_profile RENAME COLUMN car_value_gbp TO car_value_pence;
-    ALTER TABLE household_profile ALTER COLUMN car_value_pence TYPE integer
-      USING CASE WHEN car_value_pence IS NULL THEN NULL
-                 ELSE car_value_pence * 100 END;
+    IF EXISTS (
+      SELECT 1 FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'household_profile'
+        AND column_name = 'car_value_pence'
+    ) THEN
+      UPDATE household_profile
+        SET car_value_pence = COALESCE(
+          car_value_pence,
+          ROUND(car_value_gbp::numeric * 100)::integer
+        );
+      ALTER TABLE household_profile DROP COLUMN car_value_gbp;
+    ELSE
+      ALTER TABLE household_profile RENAME COLUMN car_value_gbp TO car_value_pence;
+      ALTER TABLE household_profile ALTER COLUMN car_value_pence TYPE integer
+        USING CASE WHEN car_value_pence IS NULL THEN NULL
+                   ELSE ROUND(car_value_pence::numeric * 100)::integer END;
+    END IF;
   END IF;
 END
 $$;
@@ -154,21 +193,21 @@ $$;
 DO $$ BEGIN
   ALTER TABLE service_requirements
     ADD CONSTRAINT service_requirements_service_id_unique UNIQUE (service_id);
-EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
+EXCEPTION WHEN duplicate_table OR duplicate_object OR unique_violation THEN NULL;
 END $$;
 --> statement-breakpoint
 
 DO $$ BEGIN
   ALTER TABLE current_deals
     ADD CONSTRAINT current_deals_service_id_unique UNIQUE (service_id);
-EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
+EXCEPTION WHEN duplicate_table OR duplicate_object OR unique_violation THEN NULL;
 END $$;
 --> statement-breakpoint
 
 DO $$ BEGIN
   ALTER TABLE document_extractions
     ADD CONSTRAINT document_extractions_extraction_id_unique UNIQUE (extraction_id);
-EXCEPTION WHEN duplicate_table OR duplicate_object THEN NULL;
+EXCEPTION WHEN duplicate_table OR duplicate_object OR unique_violation THEN NULL;
 END $$;
 --> statement-breakpoint
 
@@ -201,6 +240,9 @@ END $$;
 --
 -- Prevents duplicate queued/running research runs for the same service.
 -- Replaces the application-level guard in queueResearch with a DB-level guarantee.
-CREATE UNIQUE INDEX IF NOT EXISTS research_runs_active_service_idx
-  ON research_runs (service_id)
-  WHERE status IN ('queued', 'running');
+DO $$ BEGIN
+  CREATE UNIQUE INDEX IF NOT EXISTS research_runs_active_service_idx
+    ON research_runs (service_id)
+    WHERE status IN ('queued', 'running');
+EXCEPTION WHEN unique_violation THEN NULL;
+END $$;

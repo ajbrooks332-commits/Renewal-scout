@@ -22,6 +22,8 @@ import {
   StrictUpdateServiceBody,
   StrictUpdateHouseholdProfileBody,
   StrictUpdateServiceRequirementsBody,
+  getRequirementFieldsSchema,
+  validateDealValues,
 } from "@workspace/api-zod";
 
 // ── CalendarDate ──────────────────────────────────────────────────────────────
@@ -297,6 +299,14 @@ describe("StrictUpdateHouseholdProfileBody", () => {
     }
   });
 
+  it("rejects unknown keys inside vehicle objects", () => {
+    expect(
+      StrictUpdateHouseholdProfileBody.safeParse({
+        vehicles: [{ make: "Nissan", model: "Leaf", unexpected: "value" }],
+      }).success,
+    ).toBe(false);
+  });
+
   it("rejects string 'false' for boolean fields", () => {
     // This is the critical regression: Boolean("false") = true, but Zod strict rejects strings
     expect(
@@ -425,5 +435,80 @@ describe("StrictUpdateServiceRequirementsBody", () => {
     if (!result.success) {
       expect(result.error.issues[0]?.code).toBe("unrecognized_keys");
     }
+  });
+});
+
+describe("service-specific requirement field schemas", () => {
+  it("accepts valid broadband, EV and Sky bundle answers", () => {
+    const schema = getRequirementFieldsSchema("Broadband");
+    expect(
+      schema.safeParse({
+        downloadSpeedMbps: 150,
+        linkedSkyTv: true,
+        skyTvPackage: "sky_stream",
+        linkedSkyMobile: true,
+        skyMobileLines: 2,
+        skyMobilePlan: "20 GB SIM-only",
+      }).success,
+    ).toBe(true);
+
+    expect(
+      getRequirementFieldsSchema("Electricity").safeParse({
+        evOwner: true,
+        evBatteryCapacityKwh: 75,
+        homeChargerKw: 7,
+        overnightChargingStart: "23:00",
+        overnightChargingEnd: "07:00",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects unknown keys and wrong value types instead of stripping them", () => {
+    const schema = getRequirementFieldsSchema("Broadband");
+    expect(schema.safeParse({ typoSpeed: 100 }).success).toBe(false);
+    expect(schema.safeParse({ linkedSkyTv: "true" }).success).toBe(false);
+    expect(schema.safeParse({ simultaneousUsers: 2.5 }).success).toBe(false);
+    expect(schema.safeParse({ maxMonthlyBudgetGbp: -1 }).success).toBe(false);
+  });
+
+  it("covers credit-card, loan and mobile questionnaires", () => {
+    expect(
+      getRequirementFieldsSchema("Credit card").safeParse({
+        primaryUse: "balance_transfer",
+        balanceTransfer: true,
+        balanceTransferAmountGbp: 1200,
+      }).success,
+    ).toBe(true);
+    expect(
+      getRequirementFieldsSchema("Loan").safeParse({
+        purposeOfLoan: "Home improvements",
+        amountGbp: 5000,
+        termMonths: 36,
+      }).success,
+    ).toBe(true);
+    expect(
+      getRequirementFieldsSchema("Mobile phone").safeParse({
+        monthlyDataGb: 20,
+        sim_only: true,
+        maxContractMonths: "12",
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe("service-specific current-deal schemas", () => {
+  it("rejects impossible calendar dates", () => {
+    expect(
+      validateDealValues("Broadband", { renewalDate: "2026-02-30" }).success,
+    ).toBe(false);
+    expect(
+      validateDealValues("Credit card", { promoExpiryDate: "2026-13-01" }).success,
+    ).toBe(false);
+  });
+
+  it("accepts valid calendar dates", () => {
+    expect(
+      validateDealValues("Broadband", { contractEndDate: "2027-02-28" }).success,
+    ).toBe(true);
   });
 });

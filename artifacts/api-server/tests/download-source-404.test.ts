@@ -37,4 +37,9 @@ describe("removed endpoints — must not succeed", () => {
     const res = await request(app).get("/download.html");
     expect(res.status).toBe(404);
   });
+
+  it("GET /source-export.txt returns 404", async () => {
+    const res = await request(app).get("/source-export.txt");
+    expect(res.status).toBe(404);
+  });
 });

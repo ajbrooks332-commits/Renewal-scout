@@ -90,6 +90,9 @@ const QUESTIONS: Record<string, FieldDef[]> = {
     { key: "skyMobileLines",       label: "Number of Sky Mobile SIM / phone lines", type: "number",
       showWhen: { field: "linkedSkyMobile", value: true },
       placeholder: "e.g. 2", min: 1 },
+    { key: "skyMobilePlan",        label: "Current Sky Mobile plan(s)", type: "text",
+      showWhen: { field: "linkedSkyMobile", value: true },
+      placeholder: "e.g. 20 GB SIM-only, two lines" },
     { key: "linkedVirginMedia",    label: "Do you already have Virgin Media?", type: "boolean" },
     { key: "bundleDiscountImportant", label: "Is a bundle discount important to you?", type: "boolean" },
     // Bundle discount detail — shown when bundleDiscountImportant = true
@@ -274,6 +277,7 @@ const QUESTIONS: Record<string, FieldDef[]> = {
         { value: "street",   label: "Street / public road" },
       ]
     },
+    { key: "modifiedVehicle", label: "Has the vehicle been modified?", type: "boolean" },
     { key: "voluntaryExcessGbp", label: "Preferred voluntary excess (£)", type: "number", placeholder: "e.g. 250" },
     { key: "useType", label: "Vehicle use", type: "select",
       options: [
@@ -299,10 +303,14 @@ const QUESTIONS: Record<string, FieldDef[]> = {
       ]
     },
     { key: "voluntaryExcessGbp", label: "Preferred voluntary excess (£)", type: "number", placeholder: "e.g. 250" },
+    { key: "rebuildValueGbp",     label: "Estimated rebuild value (£)", type: "number", placeholder: "e.g. 250000", min: 0 },
     { key: "addAccidentalDamage",  label: "Include accidental damage cover?", type: "boolean" },
     { key: "addPersonalPossessions", label: "Include personal possessions (away from home)?", type: "boolean" },
     { key: "addLegalExpenses",     label: "Include legal expenses cover?",    type: "boolean" },
     { key: "contentsValueGbp",     label: "Estimated contents value (£)",     type: "number", placeholder: "e.g. 30000", min: 0 },
+    { key: "prevClaims",           label: "Home insurance claims in the last 5 years", type: "number", placeholder: "0 if none", min: 0, max: 20 },
+    { key: "highValueItems",       label: "Do you need cover for high-value items?", type: "boolean" },
+    { key: "floodRisk",            label: "Is the property in a known flood-risk area?", type: "boolean" },
     { key: "maxAnnualBudgetGbp",   label: "Maximum annual premium (£)",       type: "number", placeholder: "e.g. 400", min: 0 },
   ],
 
@@ -319,6 +327,7 @@ const QUESTIONS: Record<string, FieldDef[]> = {
     { key: "coverAmountGbp",    label: "Required cover amount (£)",   type: "number", placeholder: "e.g. 250000", min: 0 },
     { key: "termYears",         label: "Required term (years)",        type: "number", placeholder: "e.g. 25", min: 1, max: 50 },
     { key: "criticalIllness",   label: "Include critical illness cover?", type: "boolean" },
+    { key: "jointPolicy",       label: "Do you require a joint policy?", type: "boolean" },
     { key: "indexLinked",       label: "Should the policy be index-linked?", type: "boolean" },
     { key: "maxAnnualBudgetGbp",label: "Maximum annual premium (£)",  type: "number", placeholder: "e.g. 300", min: 0 },
   ],
@@ -339,6 +348,33 @@ const QUESTIONS: Record<string, FieldDef[]> = {
       ]
     },
     { key: "maxMonthlyBudgetGbp", label: "Maximum monthly budget (£)", type: "number", placeholder: "e.g. 20", min: 0 },
+  ],
+
+  // ── Credit card ───────────────────────────────────────────────────────────
+  "Credit card": [
+    { key: "primaryUse", label: "What is the card mainly for?", type: "select",
+      options: [
+        { value: "purchases",        label: "Everyday purchases / 0% purchases" },
+        { value: "balance_transfer", label: "Balance transfer" },
+        { value: "travel",           label: "Travel / no foreign transaction fees" },
+        { value: "cashback",         label: "Cashback" },
+        { value: "rewards",          label: "Points or rewards" },
+      ]
+    },
+    { key: "creditLimitGbp", label: "Preferred credit limit (£, if known)", type: "number", min: 0 },
+    { key: "rewardPreference", label: "Reward preference", type: "text", placeholder: "e.g. airline points or cashback" },
+    { key: "balanceTransfer", label: "Do you need to transfer an existing balance?", type: "boolean" },
+    { key: "balanceTransferAmountGbp", label: "Approximate balance to transfer (£)", type: "number",
+      showWhen: { field: "balanceTransfer", value: true }, min: 0 },
+    { key: "maxAnnualFeeGbp", label: "Maximum acceptable annual fee (£)", type: "number", min: 0 },
+  ],
+
+  // ── Loan ──────────────────────────────────────────────────────────────────
+  Loan: [
+    { key: "purposeOfLoan", label: "Purpose of the loan", type: "text", placeholder: "e.g. home improvements" },
+    { key: "amountGbp", label: "Amount required (£)", type: "number", min: 0 },
+    { key: "termMonths", label: "Preferred repayment term (months)", type: "number", min: 1, max: 360 },
+    { key: "maxAprPct", label: "Maximum acceptable representative APR (%)", type: "number", min: 0 },
   ],
 };
 
