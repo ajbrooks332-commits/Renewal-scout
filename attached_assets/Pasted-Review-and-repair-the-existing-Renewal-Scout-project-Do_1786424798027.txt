@@ -1,0 +1,340 @@
+Review and repair the existing Renewal Scout project. Do not replace it with a new architecture and do not remove working features. Make the following changes in the existing Node/Express, React, Drizzle and PostgreSQL project.
+
+SAFETY BOUNDARY
+
+Renewal Scout may collect requirements, monitor renewal dates, extract current-deal information, search public offers, compare them and prepare a checklist. It must never:
+
+- Log in to a supplier, bank, insurer or comparison account.
+- Submit an application, quotation form or credit search.
+- Accept terms, cancel or switch a service.
+- Make a payment or financial transaction.
+- Describe an offer as “best” unless eligibility, availability, features and total cost are all verifiably comparable.
+- Recommend cancelling life insurance before replacement cover is active.
+
+Keep this boundary enforced in application code, tests and static user-facing warnings.
+
+1. COMPLETE THE SOURCE EXPORT
+
+The previous export omitted required files. Before finishing, verify that the project contains and export includes:
+
+- artifacts/api-server/src/app.ts
+- every file under lib/db/src/schema/
+- lib/db/src/schema/index.ts
+- every file under lib/api-zod/
+- every file under the generated API client packages
+- artifacts/renewal-scout/package.json
+- frontend Vite and TypeScript configuration
+- root TypeScript configuration
+- pnpm-lock.yaml
+- .replit and any non-secret deployment configuration
+- all migrations and migration metadata
+- all tests
+
+Do not put ".env", Replit Secrets, API keys, passwords, node_modules, build output or Git history in the export.
+
+2. FIX DATABASE MIGRATIONS
+
+Remove MIGRATION_SENTINELS and seedJournalForPushProvisioned from "lib/db/src/lib/migrate.ts". The existence of "services" or "household_profile" does not prove that every table, column, foreign key and index in a migration exists.
+
+Allow Drizzle’s migration journal to operate normally.
+
+Add a new reconciliation migration that safely upgrades databases previously created with "drizzle-kit push". It must use appropriate "ALTER TABLE ... ADD COLUMN IF NOT EXISTS" statements and conditionally create every required foreign key, unique constraint, check constraint and index.
+
+Do not rely on "CREATE TABLE IF NOT EXISTS" to repair an existing incomplete table.
+
+Add database constraints for:
+
+- Valid research-run statuses.
+- Nonnegative money, notice periods and research windows.
+- Unique current deal per service.
+- Unique requirements row per service.
+- Unique extraction ID.
+- At most one active queued/running research run per service.
+- A genuine singleton household profile.
+
+Implement the household profile as a fixed singleton row, such as "id = 1", with a database constraint. Use atomic "INSERT ... ON CONFLICT DO UPDATE". Never run an unqualified UPDATE against "household_profile".
+
+Use integer pence for stored monetary values. Validate and convert GBP decimal values only at the API boundary. Include a safe migration from existing floating-point GBP columns.
+
+3. STRICT SHARED VALIDATION
+
+Create shared versioned Zod schemas used by both API routes and the React forms.
+
+Do not use "Boolean(value)", loose "Number(value)" conversion, arbitrary JSON records, or unchecked "unknown" values.
+
+Validation must:
+
+- Reject string values such as ""false"" for boolean fields.
+- Require finite numbers.
+- Require integers where appropriate.
+- Enforce sensible minimums and maximums.
+- Validate real "YYYY-MM-DD" calendar dates.
+- Validate and normalize UK postcodes.
+- Enforce string and array length limits.
+- Validate service type enums.
+- Reject unknown keys with a clear 400 response rather than silently discarding them.
+- Validate positive safe-integer route IDs; "1abc", zero and negative IDs must be rejected.
+
+4. FIX HOUSEHOLD AND SERVICE QUESTIONNAIRES
+
+Distinguish between:
+
+- unanswered;
+- explicitly “I don’t know/prefer not to say”; and
+- an actual value.
+
+Do not represent both unanswered and explicitly unknown as indistinguishable database nulls. Store an "unknownFields" or equivalent versioned answer-state structure.
+
+Add the following conditional questions.
+
+For electricity and dual fuel:
+
+- EV make/model or battery capacity.
+- Estimated annual EV mileage.
+- Home charger availability and charger power.
+- Normal overnight charging start and end times.
+- Whether charging can be shifted to supplier off-peak windows.
+- Smart-meter type if known.
+- Home battery.
+- Solar panels and export tariff.
+- Annual electricity and gas usage.
+- Current day/night or peak/off-peak usage where known.
+- Payment method.
+- Fixed, variable or no tariff preference.
+
+For broadband:
+
+- Minimum download and upload speed.
+- Number of simultaneous users.
+- Working from home/video calls.
+- Gaming and streaming requirements.
+- Landline requirement.
+- Full-fibre preference.
+- Maximum acceptable contract length.
+- Maximum monthly budget.
+- Current Sky TV subscription and package.
+- Current Sky Mobile lines/packages.
+- Current broadband/TV/mobile bundle discount.
+- Whether the user is willing to split or lose the bundle.
+- Required TV, sports or cinema packages.
+- Current Virgin Media or other linked services.
+
+Retain appropriate questions for car insurance, home insurance, life insurance, mobile, loans and credit cards. Do not collect passwords, full payment-card data, bank credentials, driving-licence numbers or unnecessary medical information.
+
+Support multiple vehicles rather than storing only one car when "numCars" is greater than one.
+
+5. SERVICE-SPECIFIC COMPLETENESS
+
+Replace the global missing-field list in "buildPrompt" with service-specific schemas.
+
+Only report car fields as missing for car insurance. Do not report missing car, smoker or insurance fields during broadband research.
+
+Create two explicit research modes:
+
+- "personalised": all required personalisation fields are supplied.
+- "generic": missing details are acknowledged and results must be described as non-personalised public examples.
+
+Replace "forceWithMissing" with a validated "researchMode". Generic research must not calculate personalised savings or claim eligibility.
+
+The completeness report must identify whether each missing item belongs in the household page, service requirements tab or current-deal tab so the UI can navigate to the correct place.
+
+When checking current cost, examine actual cost fields. A confirmed provider name alone must not count as confirmed cost information.
+
+6. CURRENT-DEAL DATA AND PROVENANCE
+
+Replace arbitrary "Record<string, ProvenanceField>" writes with versioned, service-specific deal schemas.
+
+The manual endpoint must accept values and clear operations, not provenance supplied by the browser. The server must assign "source: "user"".
+
+Only the extraction endpoint may create "extracted_unconfirmed".
+
+Only the atomic confirmation endpoint may create "extracted_confirmed".
+
+Reject attempts by a client to submit a server-controlled provenance value.
+
+Add appropriate common deal fields:
+
+- Provider and product/tariff.
+- Contract start, minimum term, renewal and contract-end dates.
+- Monthly/annual price.
+- Setup and one-off fees.
+- Exit/cancellation fees.
+- Notice period.
+- Promotion or discount end date.
+- Annual or mid-contract price-increase clause.
+- Payment method.
+- Bundle products and bundle discount.
+- Inclusions, exclusions and notes.
+
+Add service-specific fields including energy unit rates and standing charges, broadband speeds and bundle terms, insurance premium/cover/excess/add-ons, and credit/loan APR, outstanding balance, fees and promotional expiry.
+
+7. DOCUMENT EXTRACTION
+
+Keep documents in memory only and never intentionally persist the original bytes.
+
+Require successful magic-byte detection. If "fileTypeFromBuffer" cannot identify the file, reject it. Never fall back to the browser-provided MIME type.
+
+Require PDF, JPEG or PNG; enforce the size limit; add upload/extraction rate limiting; use a generic filename in the OpenAI request; and add an OpenAI request timeout and controlled retry policy.
+
+Add "store: false" to extraction requests.
+
+Correct the disclosure to say:
+
+“Renewal Scout does not intentionally save the original document. It is transmitted to OpenAI for extraction. OpenAI retention depends on your API organisation’s data-control settings. Redact account numbers, payment details, full addresses and unrelated personal information before upload.”
+
+Require an unticked consent checkbox before upload.
+
+Persist only the validated extracted draft values and metadata, never original bytes. Add a draft status with "draft", "applying", "applied", "discarded", "expired" and "failed". Add expiry and a real discard endpoint so clicking Discard updates the database.
+
+Allow a user to resume a pending extraction after refreshing the page.
+
+Confirmation must be atomic:
+
+- Start a database transaction.
+- Conditionally change the extraction from "draft" to "applying".
+- If no row was changed, return 409.
+- Validate every accepted value against the service-specific schema.
+- Upsert the current deal.
+- Mark the extraction "applied".
+- Commit all changes together.
+
+Two concurrent confirmations of the same extraction must result in exactly one success and one 409.
+
+8. OPENAI RESEARCH
+
+Replace every "gpt-4o" fallback with:
+
+"process.env.OPENAI_MODEL ?? "gpt-5.6-terra""
+
+In production, validate required OpenAI configuration at startup and display a safe diagnostic message if the model is unavailable.
+
+Keep the Responses API with:
+
+- "tools: [{ type: "web_search" }]"
+- strict "text.format" JSON Schema
+- runtime Zod validation
+
+Add "store: false" to research requests as well as document extraction.
+
+Add a timeout, bounded retries and user-safe errors. Do not save or display raw OpenAI error messages. Log only redacted error type, request ID and safe context.
+
+Use a per-service allowlist when creating the OpenAI prompt. A broadband request must not contain smoker status, vehicle value, claims history or unrelated insurance data. Send the minimum data required for that service.
+
+Strengthen report schemas with maximum lengths, maximum three options, nonnegative finite costs, valid dates and valid HTTP/HTTPS URLs.
+
+Do not trust URLs merely because the model placed them in JSON. Reconcile report source URLs against actual Responses API URL-citation annotations. Remove or mark unsupported claims as unverified.
+
+Include evidence for each important price or term: claim, source URL, access date and whether it is an official provider, regulator or comparison source.
+
+Calculate estimated savings in server code only when the current cost and proposed cost are genuinely comparable. Include setup charges, discounts, price increases and total contract cost. If a personalised quotation is required, savings must be null.
+
+Add mandatory server-generated warnings for life insurance, credit cards and loans. Do not rely on the model to remember them.
+
+9. RESEARCH JOBS AND SCHEDULING
+
+Do not execute important jobs solely with fire-and-forget promises in an HTTP request.
+
+Implement a PostgreSQL-backed worker loop:
+
+- Scheduler only inserts due jobs.
+- Worker polls queued jobs.
+- Jobs are claimed atomically.
+- Use lease/heartbeat timestamps so genuinely abandoned jobs can be recovered.
+- Retries must be bounded.
+- Multiple processes must not execute the same run.
+
+Start the scheduler and worker only in "src/index.ts", after migrations and database readiness. Importing "app.ts" must have no scheduler, signal-handler or background-job side effects.
+
+Parse "SCHEDULER_ENABLED" strictly. Only case-insensitive ""true"" should enable it. Validate scheduler hour, minute and timezone.
+
+Fix the expired-renewal loop:
+
+- If the target date is in the past, "needsResearch" must return false.
+- Always set "nextResearchAt" to either the calculated date or null.
+- Do not leave an old due date in place after research.
+- Update the completed run and service schedule transactionally.
+
+10. EXPRESS SECURITY
+
+In "artifacts/api-server/src/app.ts":
+
+- Disable "x-powered-by".
+- Configure the Replit proxy trust explicitly.
+- Use Helmet with an appropriate production content-security policy.
+- Use same-origin requests where possible.
+- Never use "cors({ origin: true })".
+- If separate origins are required, use an exact validated allowlist.
+- In production, require a valid HTTPS "APP_BASE_URL".
+- Apply strict Origin/Referer CSRF protection to mutations.
+- Limit JSON and URL-encoded body sizes.
+- Use secure, HTTP-only, SameSite=Strict production cookies.
+- Fail startup in production if ADMIN_PASSWORD or a 32+ character SESSION_SECRET is absent.
+- Return generic errors without stack traces or database/OpenAI internals.
+- Escape user-controlled values included in HTML email.
+
+Return setup warnings only after authentication.
+
+11. FRONTEND CORRECTIONS
+
+Fix the research-button logic so a complete request does not automatically send a missing-data override.
+
+Replace “Research anyway” with an explicit “Run generic research” choice explaining its limitations.
+
+When information is missing, direct the user to the correct tab rather than always sending them to the household page.
+
+Rename “Delete service” to “Archive service”, because the backend archives it.
+
+Poll while a research run is queued/running and refresh the report automatically.
+
+In the manual current-deal editor, show all existing values, including confirmed extracted values. Track touched fields so untouched provenance is preserved.
+
+Parse number inputs as numbers, not strings.
+
+Call the extraction discard endpoint when the user clicks Discard.
+
+12. TESTS
+
+Add or correct tests proving:
+
+- Manual APIs cannot assign extracted provenance.
+- String ""false"" is rejected rather than stored as true.
+- Negative, infinite, decimal-only integer fields and impossible dates are rejected.
+- Spoofed MIME headers and unidentified files are rejected.
+- Original document bytes are never persisted or logged.
+- "store:false" is used for both OpenAI call types.
+- Broadband research excludes smoker, claims and vehicle data.
+- EV overnight-charging and Sky bundle answers reach the correct research prompt.
+- Generic and personalised modes behave differently.
+- Two concurrent extraction confirmations produce one success and one 409.
+- A partially created legacy database is fully reconciled by migrations.
+- The singleton profile cannot have two rows.
+- A past target date does not schedule repeated research.
+- Queued jobs survive a simulated process restart.
+- Citation URLs not present in Responses annotations are excluded or marked unverified.
+- Authenticated requests to payment, switch, cancel, application and credit-search paths return 404/405 and perform no side effect.
+
+Delete the existing fake duplicate-run test that merely asserts "42 === 42". Replace it with a test that actually invokes the function.
+
+13. VERIFICATION AND DELIVERY
+
+Run and report the exact results of:
+
+- "pnpm install"
+- "pnpm run typecheck"
+- "pnpm --filter @workspace/api-server run test"
+- "pnpm --filter @workspace/api-server run test:integration"
+- "pnpm run build"
+
+Do not say tests passed without including the command, exit status and test count.
+
+Provide:
+
+1. A concise changed-files list.
+2. Migration and rollback notes.
+3. Any remaining limitations.
+4. A complete "renewal-scout-fixed.zip".
+5. A complete plain-text source export for independent review.
+
+Create the ZIP without node_modules, ".git", ".env*", secrets, build output, coverage or the ZIP itself. Verify it with "unzip -t renewal-scout-fixed.zip" and report its SHA-256 checksum.
+
+Do not publish or process real household documents until all required commands pass.
