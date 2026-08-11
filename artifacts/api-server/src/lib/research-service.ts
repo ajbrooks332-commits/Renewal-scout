@@ -458,11 +458,7 @@ function buildPrompt(
 
   // List gaps explicitly for fields relevant to this service type
   const missingGaps: string[] = [];
-  const profileFields = [
-    "postcode", "propertyType", "tenure", "bedrooms", "numAdults",
-    "heatingType", "annualElectricityKwh", "annualGasKwh",
-    "carMake", "carModel", "carYear", "annualMileage",
-  ];
+  const profileFields = PROFILE_ALLOWLIST[service.serviceType] ?? new Set<string>();
   for (const k of profileFields) {
     if (!ctx.profile || ctx.profile[k] === null || ctx.profile[k] === undefined) {
       missingGaps.push(k);
@@ -693,8 +689,8 @@ export async function executeResearch(runId: number): Promise<void> {
     // Sanitise URLs (filter non-http, deduplicate)
     report = sanitiseReport(report);
 
-    // Citation reconciliation: URLs not backed by a Responses API annotation
-    // are removed. If no annotations were returned, keep sanitised sources.
+    // Citation reconciliation is fail-closed: URLs not backed by a Responses
+    // API annotation are removed, including when no annotations are returned.
     const outputItems = (
       response.output as unknown as Array<Record<string, unknown>>
     ) ?? [];

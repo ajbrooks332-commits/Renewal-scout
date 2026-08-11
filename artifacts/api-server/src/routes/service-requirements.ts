@@ -1,170 +1,16 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
 import { db, servicesTable, serviceRequirementsTable } from "@workspace/db";
-import { StrictUpdateServiceRequirementsBody, parseRouteId } from "@workspace/api-zod";
+import {
+  StrictUpdateServiceRequirementsBody,
+  getRequirementFieldNames,
+  getRequirementFieldsSchema,
+  parseRouteId,
+} from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/require-auth";
 
 const router: IRouter = Router();
 router.use(requireAuth);
-
-/**
- * Known requirement field keys per service type.
- *
- * Fields not in this list are silently discarded on write (the top-level
- * body keys are strictly validated by the Zod schema; only field names
- * inside `fields` are filtered here).
- *
- * Answer-state semantics:
- *   Key absent from stored `fields`  → unanswered / never asked
- *   Key present with null value      → explicitly "I don't know"
- *   Key present with non-null value  → answered
- */
-export const KNOWN_FIELDS: Record<string, string[]> = {
-  // ── Broadband ─────────────────────────────────────────────────────────────
-  // Core requirements
-  Broadband: [
-    "downloadSpeedMbps",
-    "uploadSpeedMbps",
-    "simultaneousUsers",
-    "workFromHome",
-    "videoCallsFrequent",
-    "onlineGaming",
-    "streamingHd",
-    "landlineRequired",
-    "fullFibrePreferred",
-    "maxContractMonths",
-    "maxMonthlyBudgetGbp",
-    // Bundle links (links to existing subscriptions)
-    "linkedSkyTv",
-    "linkedSkyMobile",
-    "linkedVirginMedia",
-    "bundleDiscountImportant",
-    "willingToSplitBundle",
-    // Sky bundle details — shown when linkedSkyTv or linkedSkyMobile is true
-    "skyTvPackage",
-    "skyTvSportsRequired",
-    "skyTvCinemaRequired",
-    "skyMobileLines",
-    "currentBundleDiscountGbp",
-    // Legacy / still supported
-    "contractLengthMonths",
-    "includesLineRental",
-    "tvAddon",
-    "homePhoneAddon",
-  ],
-
-  // ── Electricity ───────────────────────────────────────────────────────────
-  Electricity: [
-    // Tariff preferences
-    "tariffType",        // fixed | variable | tracker | economy7 | any
-    "tariffPreference",  // alias/extension
-    "greenPreferred",
-    "paymentMethod",     // direct_debit | prepay | quarterly
-    // Usage data
-    "annualKwh",
-    "dayNightSplit",     // Economy 7 (boolean)
-    "dayUsagePercent",   // % of usage in peak hours
-    // Smart meter
-    "smartMeter",
-    "smartMeterType",    // SMETS1 | SMETS2 | none
-    // EV ownership gate — used to conditionally show EV detail questions in UI
-    "evOwner",
-    // EV-specific energy requirements (shown when evOwner=true)
-    "evMake",
-    "evModel",
-    "evBatteryCapacityKwh",
-    "evAnnualMileage",
-    "homeChargerKw",
-    "overnightChargingStart", // e.g. "23:00"
-    "overnightChargingEnd",
-    "shiftToOffPeak",
-    // Solar / home battery
-    "solarPanels",
-    "solarExportTariff",
-    "homeBattery",
-    "homeBatteryCapacityKwh",
-  ],
-
-  // ── Gas and electricity ───────────────────────────────────────────────────
-  "Gas and electricity": [
-    "tariffType",
-    "tariffPreference",
-    "greenPreferred",
-    "paymentMethod",
-    "annualElectricityKwh",
-    "annualGasKwh",
-    "dayNightSplit",
-    "dayUsagePercent",
-    "smartMeter",
-    "smartMeterType",
-    // EV ownership gate
-    "evOwner",
-    // EV-specific (shown when evOwner=true)
-    "evMake",
-    "evModel",
-    "evBatteryCapacityKwh",
-    "evAnnualMileage",
-    "homeChargerKw",
-    "overnightChargingStart",
-    "overnightChargingEnd",
-    "shiftToOffPeak",
-    "solarPanels",
-    "solarExportTariff",
-    "homeBattery",
-    "homeBatteryCapacityKwh",
-  ],
-
-  // ── Car insurance ─────────────────────────────────────────────────────────
-  "Car insurance": [
-    "coverType",           // comprehensive | tpft | tpo
-    "namedDrivers",
-    "parkingLocation",     // garage | driveway | street
-    "modifiedVehicle",
-    "noClaimsYears",
-    "useType",             // social | commuting | business
-    "voluntaryExcessGbp",
-  ],
-
-  // ── Home insurance ────────────────────────────────────────────────────────
-  "Home insurance": [
-    "coverType",           // buildings_and_contents | buildings_only | contents_only
-    "rebuildValueGbp",
-    "contentsValueGbp",
-    "voluntaryExcessGbp",
-    "prevClaims",
-    "highValueItems",
-    "floodRisk",
-  ],
-
-  // ── Life insurance ────────────────────────────────────────────────────────
-  "Life insurance": [
-    "coverType",           // level_term | decreasing_term | whole_of_life
-    "coverAmountGbp",
-    "termYears",
-    "jointPolicy",
-    "criticalIllnessCover",
-  ],
-
-  // ── Credit card ───────────────────────────────────────────────────────────
-  "Credit card": [
-    "primaryUse",          // purchases | balance_transfer | travel | cashback
-    "creditLimitGbp",
-    "rewardPreference",
-    "balanceTransfer",
-  ],
-
-  // ── Loan ──────────────────────────────────────────────────────────────────
-  Loan: ["purposeOfLoan", "amountGbp", "termMonths"],
-
-  // ── Mobile phone ─────────────────────────────────────────────────────────
-  "Mobile phone": [
-    "dataGb",
-    "includesHandset",
-    "networkPreference",
-    "contractMonths",
-    "roamingNeeded",
-  ],
-};
 
 // GET /services/:id/requirements
 router.get("/services/:id/requirements", async (req, res): Promise<void> => {
@@ -236,26 +82,22 @@ router.put("/services/:id/requirements", async (req, res): Promise<void> => {
     return;
   }
 
-  // Validate all field names against the service-type allowlist.
-  // Unknown field names are REJECTED with HTTP 400 (not silently discarded)
-  // to surface client bugs and prevent cross-service field leakage.
-  // Key presence with null value is preserved: null = "I don't know".
-  const allowed = new Set(KNOWN_FIELDS[service.serviceType] ?? []);
-
-  const unknownKeys = Object.keys(parsed.data.fields).filter(
-    (k) => !allowed.has(k),
+  // Validate both field names and values against the service-specific strict
+  // schema. This rejects cross-service keys, string booleans, negative costs,
+  // invalid select values, decimals in integer fields, NaN and Infinity.
+  const fieldsResult = getRequirementFieldsSchema(service.serviceType).safeParse(
+    parsed.data.fields,
   );
-  if (unknownKeys.length > 0) {
+  if (!fieldsResult.success) {
     res.status(400).json({
-      error:
-        `Unknown field name(s) for service type "${service.serviceType}": ` +
-        `${unknownKeys.map((k) => JSON.stringify(k)).join(", ")}. ` +
-        `Permitted fields: ${[...allowed].sort().join(", ")}`,
+      error: `Requirement validation failed for service type "${service.serviceType}".`,
+      details: fieldsResult.error.format(),
     });
     return;
   }
 
-  const filtered = { ...parsed.data.fields };
+  const validatedFields = fieldsResult.data as Record<string, unknown>;
+  const allowed = new Set(getRequirementFieldNames(service.serviceType));
 
   // unknownFields: array of field names the user explicitly marked as unknown.
   // Reject any that are not in the allowlist.
@@ -272,6 +114,18 @@ router.put("/services/:id/requirements", async (req, res): Promise<void> => {
   }
   const unknownFields = parsed.data.unknownFields ?? [];
 
+  const inconsistentUnknownFields = unknownFields.filter(
+    (key) => validatedFields[key] !== null,
+  );
+  if (inconsistentUnknownFields.length > 0) {
+    res.status(400).json({
+      error:
+        "Fields marked as unknown must be present in fields with a null value: " +
+        inconsistentUnknownFields.map((key) => JSON.stringify(key)).join(", "),
+    });
+    return;
+  }
+
   const [existing] = await db
     .select()
     .from(serviceRequirementsTable)
@@ -281,13 +135,13 @@ router.put("/services/:id/requirements", async (req, res): Promise<void> => {
   if (existing) {
     [row] = await db
       .update(serviceRequirementsTable)
-      .set({ fields: filtered, unknownFields, updatedAt: new Date() })
+      .set({ fields: validatedFields, unknownFields, updatedAt: new Date() })
       .where(eq(serviceRequirementsTable.serviceId, id))
       .returning();
   } else {
     [row] = await db
       .insert(serviceRequirementsTable)
-      .values({ serviceId: id, fields: filtered, unknownFields })
+      .values({ serviceId: id, fields: validatedFields, unknownFields })
       .returning();
   }
 
@@ -300,5 +154,4 @@ router.put("/services/:id/requirements", async (req, res): Promise<void> => {
   });
 });
 
-export { KNOWN_FIELDS as default_export };
 export default router;

@@ -20,3 +20,6 @@ export * from "./completeness-types";
 
 // Versioned service-specific deal schemas (server + shared tooling)
 export * from "./deal-schemas";
+
+// Strict service-specific questionnaire schemas
+export * from "./requirements-schemas";

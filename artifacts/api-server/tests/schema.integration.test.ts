@@ -30,7 +30,8 @@
  */
 import { describe, it, expect, afterAll, beforeAll } from "vitest";
 import { Pool } from "pg";
-import { runMigrations } from "@workspace/db";
+import { drizzle, type NodePgDatabase } from "drizzle-orm/node-postgres";
+import { runMigrations } from "@workspace/db/migrate";
 
 const EXPECTED_TABLES = [
   "services",
@@ -45,6 +46,13 @@ const EXPECTED_TABLES = [
 // All raw SQL in this file uses testPool, NOT the @workspace/db pool, so the
 // application database is never touched.
 let testPool: Pool;
+let testDb: NodePgDatabase<Record<string, never>>;
+
+function databaseIdentity(connectionString: string): string {
+  const parsed = new URL(connectionString);
+  const port = parsed.port || "5432";
+  return `${parsed.protocol}//${parsed.username}@${parsed.hostname.toLowerCase()}:${port}${parsed.pathname}`;
+}
 
 // ── Safety guards ─────────────────────────────────────────────────────────────
 beforeAll(async () => {
@@ -59,7 +67,7 @@ beforeAll(async () => {
     );
   }
 
-  if (testUrl === appUrl) {
+  if (appUrl && databaseIdentity(testUrl) === databaseIdentity(appUrl)) {
     throw new Error(
       "TEST_DATABASE_URL must differ from DATABASE_URL. " +
       "The integration test suite clears migration journals and inserts/deletes rows — " +
@@ -76,6 +84,7 @@ beforeAll(async () => {
 
   // Create a dedicated pool for the test database.
   testPool = new Pool({ connectionString: testUrl });
+  testDb = drizzle(testPool);
 
   // Warm up the pool and verify connectivity before any test runs.
   await testPool.query("SELECT 1");
@@ -85,11 +94,11 @@ beforeAll(async () => {
 
 describe("database schema — post-migration integrity", () => {
   it("runMigrations() completes without error (fresh call)", async () => {
-    await expect(runMigrations()).resolves.not.toThrow();
+    await expect(runMigrations(testDb)).resolves.not.toThrow();
   });
 
   it("runMigrations() is idempotent — safe to call twice", async () => {
-    await expect(runMigrations()).resolves.not.toThrow();
+    await expect(runMigrations(testDb)).resolves.not.toThrow();
   });
 
   it("all six expected tables exist in the public schema", async () => {
@@ -349,7 +358,7 @@ describe("upgrade-path: push-provisioned database simulation", () => {
   });
 
   it("runMigrations() succeeds when journal is empty but all tables already exist", async () => {
-    await expect(runMigrations()).resolves.not.toThrow();
+    await expect(runMigrations(testDb)).resolves.not.toThrow();
   });
 
   it("all six tables still exist after journal-cleared migration run", async () => {
@@ -390,6 +399,6 @@ describe("upgrade-path: push-provisioned database simulation", () => {
   });
 
   it("a second call to runMigrations() is still idempotent", async () => {
-    await expect(runMigrations()).resolves.not.toThrow();
+    await expect(runMigrations(testDb)).resolves.not.toThrow();
   });
 });

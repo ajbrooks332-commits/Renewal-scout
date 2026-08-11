@@ -34,6 +34,7 @@ append_dir() {
     # Skip node_modules, dist, .git, coverage, turbo cache
     case "$file" in
       */node_modules/*|*/.git/*|*/dist/*|*/coverage/*|*/.turbo/*) continue ;;
+      */artifacts/renewal-scout/public/source-export.txt) continue ;;
     esac
     append_file "$file"
   done < <(find "$dir" -type f \( \
