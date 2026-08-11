@@ -498,6 +498,23 @@ function buildPrompt(
   );
 }
 
+// ─── Failure-stage tracking ───────────────────────────────────────────────────
+// Fixed stage codes advanced immediately before each pipeline operation so the
+// catch block can record exactly which stage failed without inspecting
+// err.message (which may contain sensitive content).
+type ResearchStage =
+  | "OPENAI_REQUEST"
+  | "EMPTY_OUTPUT"
+  | "JSON_PARSE"
+  | "SCHEMA_VALIDATION"
+  | "SANITISE_REPORT"
+  | "CITATION_EXTRACTION"
+  | "CITATION_RECONCILIATION"
+  | "SAVINGS_CALCULATION"
+  | "WARNING_INJECTION"
+  | "NEXT_RESEARCH_DATE"
+  | "DATABASE_SAVE";
+
 // ─── Core research execution ──────────────────────────────────────────────────
 
 export async function executeResearch(runId: number): Promise<void> {
@@ -551,6 +568,11 @@ export async function executeResearch(runId: number): Promise<void> {
       logger.warn({ err, runId }, "Heartbeat update failed");
     }
   }, HEARTBEAT_INTERVAL_MS);
+
+  // Tracks which pipeline stage was executing when an error occurred.
+  // Initialized to OPENAI_REQUEST — the default assumption (no response
+  // received yet) is correct when the OpenAI call itself throws.
+  let failureStage: ResearchStage = "OPENAI_REQUEST";
 
   try {
     // ── Fetch run + service ─────────────────────────────────────────────────
@@ -669,10 +691,40 @@ export async function executeResearch(runId: number): Promise<void> {
       },
     });
 
+    // Safe response metadata — output_text and all content are never logged.
+    // Captures only structural properties: status, incomplete reason, item
+    // count, and item type tags (e.g. "output_text", "web_search_call").
+    const responseOutputItems = (
+      response.output as unknown as Array<Record<string, unknown>>
+    ) ?? [];
+    {
+      const meta = response as unknown as Record<string, unknown>;
+      const incompleteDetails = meta["incomplete_details"] as
+        | { reason?: string }
+        | null
+        | undefined;
+      logger.info(
+        {
+          runId,
+          responseStatus: meta["status"] as string | undefined,
+          ...(incompleteDetails?.reason && {
+            incompleteReason: incompleteDetails.reason,
+          }),
+          outputItemCount: responseOutputItems.length,
+          outputItemTypes: responseOutputItems.map((i) =>
+            String((i as Record<string, unknown>)["type"] ?? "unknown"),
+          ),
+        },
+        "Research: OpenAI response received",
+      );
+    }
+
+    failureStage = "EMPTY_OUTPUT";
     const outputText = response.output_text;
     if (!outputText) throw new Error("No output from AI response.");
 
     // Parse and validate at runtime with Zod (enforces maxLength, finite costs, etc.)
+    failureStage = "JSON_PARSE";
     let parsed: unknown;
     try {
       parsed = JSON.parse(outputText);
@@ -680,8 +732,24 @@ export async function executeResearch(runId: number): Promise<void> {
       throw new Error("AI returned invalid JSON.");
     }
 
+    failureStage = "SCHEMA_VALIDATION";
     const validated = DealReportSchema.safeParse(parsed);
     if (!validated.success) {
+      // Log safe Zod diagnostics: issue code and field path only.
+      // Rejected values and Zod messages are never included.
+      const zodDiagnostics = validated.error.issues.map((issue) => ({
+        code: issue.code,
+        path: issue.path.map(String).join("."),
+      }));
+      logger.warn(
+        {
+          runId,
+          failureStage,
+          zodIssueCount: validated.error.issues.length,
+          zodIssues: zodDiagnostics,
+        },
+        "Research: schema validation failed",
+      );
       throw new Error(
         `AI output failed schema validation: ${validated.error.message}`,
       );
@@ -690,31 +758,35 @@ export async function executeResearch(runId: number): Promise<void> {
     let report: DealReport = validated.data;
 
     // Sanitise URLs (filter non-http, deduplicate)
+    failureStage = "SANITISE_REPORT";
     report = sanitiseReport(report);
 
     // Citation reconciliation is fail-closed: URLs not backed by a Responses
     // API annotation are removed, including when no annotations are returned.
-    const outputItems = (
-      response.output as unknown as Array<Record<string, unknown>>
-    ) ?? [];
-    const citationUrls = extractCitationUrls(outputItems);
+    failureStage = "CITATION_EXTRACTION";
+    const citationUrls = extractCitationUrls(responseOutputItems);
+    failureStage = "CITATION_RECONCILIATION";
     report = reconcileCitationUrls(report, citationUrls);
 
     // Server-side savings calculation — overrides AI value which is discarded.
     // Pass the full dealFields so computeSavings can prefer confirmed deal
     // costs (annualCostGbp, monthlyCostGbp) over the legacy pence columns.
+    failureStage = "SAVINGS_CALCULATION";
     report.estimated_annual_saving_gbp = computeSavings(report, service, dealFields);
 
     // Prepend mandatory warnings for regulated/risky service types.
     // These are not delegated to the model to ensure they are never omitted.
+    failureStage = "WARNING_INJECTION";
     addMandatoryWarnings(report, service.serviceType);
 
+    failureStage = "NEXT_RESEARCH_DATE";
     const nextResearchAt = calculateNextResearchDate(service);
 
     // Persist completion atomically — both the run status and the service
     // scheduling fields must update together. A half-written state (e.g. run
     // marked complete but nextResearchAt not updated) would cause duplicate
     // research triggers or missing scheduling data.
+    failureStage = "DATABASE_SAVE";
     const now = new Date();
     await db.transaction(async (tx) => {
       await tx
@@ -778,14 +850,24 @@ export async function executeResearch(runId: number): Promise<void> {
       : isOpenAIError
         ? `AI service error (type: ${errType}, status: ${errStatus ?? "n/a"}, ` +
           `code: ${errCode}, request_id: ${reqId})`
-        : "Research could not be completed. Please try again later.";
+        : `Research could not be completed. Reference: ${failureStage}.`;
+
+    // For database failures, capture SQLSTATE only — never SQL text, parameters
+    // or messages.  errCode is safe here because it's the PostgreSQL error code
+    // (e.g. "23505"), not a message or data value.
+    const sqlstate =
+      failureStage === "DATABASE_SAVE"
+        ? (errObj["code"] as string | undefined)
+        : undefined;
 
     logger.error(
       {
         runId,
+        failureStage,
         errorType: constructorName,
         ...(errStatus !== undefined && { httpStatus: errStatus }),
         ...(reqId !== "n/a"          && { requestId: reqId }),
+        ...(sqlstate !== undefined    && { sqlstate }),
       },
       "Research failed",
     );
