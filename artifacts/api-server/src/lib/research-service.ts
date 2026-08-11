@@ -585,11 +585,14 @@ export async function executeResearch(runId: number): Promise<void> {
 
     const openai = new OpenAI({
       apiKey,
-      // Limit SDK-level retries to 2 so we never multiply retries with
-      // any external retry logic. The 45 s timeout per attempt prevents
-      // a single slow request from stalling the job indefinitely.
-      maxRetries: 2,
-      timeout: 45_000,
+      // Web-search research with strict structured output can legitimately
+      // take longer than 45 s, so the timeout is raised to 180 s (3 min).
+      timeout: 180_000,
+      // Automatic retries are disabled entirely.  A timed-out request may
+      // still be executing on OpenAI's side and consuming API credit; an
+      // automatic retry would start a duplicate paid run.  The user can
+      // manually retry from the UI if needed.
+      maxRetries: 0,
     });
 
     // Fetch household context for the research prompt
@@ -744,19 +747,48 @@ export async function executeResearch(runId: number): Promise<void> {
       logger.warn({ err, runId }, "Failed to send research complete email"),
     );
   } catch (err) {
-    // Sanitise: log the real error internally but never expose it to users.
-    // For OpenAI errors, include the public-safe type + request_id so operators
-    // can correlate with OpenAI dashboard. All other errors get a generic
-    // message — raw err.message may contain internal paths, DB state, or
-    // other implementation details that must not reach the database or UI.
-    const isOpenAIError = err && typeof err === "object" && "status" in err;
-    const safeError = isOpenAIError
-      ? `AI service error (type: ${(err as Record<string,unknown>)["type"] ?? "unknown"}, ` +
-        `request_id: ${(err as Record<string,unknown>)["request_id"] ?? "n/a"})`
-      : "Research could not be completed. Please try again later.";
+    // Sanitise: log error metadata internally but never expose raw messages,
+    // prompts, household data, API keys or auth headers to the DB or UI.
+    // Always redact: never log err.message, prompt strings, apiKey, cookies.
+    const errObj = err && typeof err === "object" ? (err as Record<string, unknown>) : {};
+    const constructorName = err instanceof Error ? err.constructor.name : String(typeof err);
 
-    logger.error({ runId, errorType: err instanceof Error ? err.constructor.name : typeof err },
-      "Research failed");
+    // A request that never received a response (network / connection timeout).
+    // APIConnectionTimeoutError is thrown when the SDK timeout fires before
+    // OpenAI sends any HTTP response — the server may still be processing.
+    const isTimeout = constructorName === "APIConnectionTimeoutError";
+
+    // OpenAI SDK errors carry a numeric HTTP status; plain JS errors do not.
+    const isOpenAIError = "status" in errObj;
+
+    // The SDK exposes the OpenAI request identifier as requestID (v7+) with
+    // request_id as a legacy alias.  Prefer requestID; fall back to request_id.
+    const reqId =
+      (errObj["requestID"] as string | undefined) ??
+      (errObj["request_id"] as string | undefined) ??
+      "n/a";
+
+    // Safely extract public-safe metadata only — never err.message.
+    const errType   = (errObj["type"]   as string | undefined) ?? "unknown";
+    const errStatus = (errObj["status"] as number | undefined);
+    const errCode   = (errObj["code"]   as string | undefined) ?? "unknown";
+
+    const safeError = isTimeout
+      ? "AI research timed out before completion. No automatic retry was made."
+      : isOpenAIError
+        ? `AI service error (type: ${errType}, status: ${errStatus ?? "n/a"}, ` +
+          `code: ${errCode}, request_id: ${reqId})`
+        : "Research could not be completed. Please try again later.";
+
+    logger.error(
+      {
+        runId,
+        errorType: constructorName,
+        ...(errStatus !== undefined && { httpStatus: errStatus }),
+        ...(reqId !== "n/a"          && { requestId: reqId }),
+      },
+      "Research failed",
+    );
 
     // Best-effort status update — log if this also fails but don't rethrow
     // (the finally block still clears the heartbeat so recovery can pick it up)
