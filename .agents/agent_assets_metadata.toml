@@ -19,5 +19,12 @@ description = "All source files from api-server, renewal-scout frontend, and lib
 id = "8QPz8bzhe6mlnB6qFRx06"
 uri = "file://renewal-scout-export.txt"
 type = "text"
-title = "Renewal Scout — Full Source Code"
-description = "All source files concatenated — copy this into ChatGPT."
+title = "Renewal Scout — Full source as plain text"
+description = "The entire codebase in one plain-text file (33,642 lines). Handy if ChatGPT struggles with the ZIP — you can paste sections or upload the .txt directly."
+
+[[outputs]]
+id = "Gf7hsjbhVkYlDoAW0Lhl-"
+uri = "file://renewal-scout-review.zip"
+type = "unspecified"
+title = "Renewal Scout — Codebase + Build (for ChatGPT review)"
+description = "Complete source code (290 files) plus the fresh production build output for both the API server and frontend. 4.1 MB ZIP, no secrets or env files included. Upload this directly to ChatGPT on Android."
