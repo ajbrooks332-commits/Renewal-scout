@@ -133,6 +133,24 @@ export default function ServiceDetailPage() {
   const triggerResearch = useTriggerResearch();
   const archiveService = useArchiveService();
 
+  // Computed before any conditional return so the value is always stable
+  // across renders (detail may be undefined while loading).
+  const isResearching =
+    detail?.runs?.some(
+      (run) => run.status === "queued" || run.status === "running",
+    ) ?? false;
+
+  // Poll every 5 s while a research run is queued or running.
+  // MUST be above all early returns to satisfy React's Rules of Hooks.
+  // Stops automatically when the run completes, so idle pages do not poll.
+  useEffect(() => {
+    if (!isResearching) return;
+    const timer = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: getGetServiceQueryKey(id) });
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [isResearching, id, queryClient]);
+
   if (isLoading) {
     return (
       <AppLayout>
@@ -188,18 +206,6 @@ export default function ServiceDetailPage() {
       });
     }
   };
-
-  const isResearching = runs.some(r => r.status === "queued" || r.status === "running");
-
-  // Poll every 5 s while a research run is queued or running.
-  // Stops automatically when the run completes, so idle pages do not poll.
-  useEffect(() => {
-    if (!isResearching) return;
-    const timer = setInterval(() => {
-      queryClient.invalidateQueries({ queryKey: getGetServiceQueryKey(id) });
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [isResearching, id, queryClient]);
 
   const showGate = !genericMode && completenessReport && (completenessReport.blocking || completenessReport.recommended.length > 0);
 

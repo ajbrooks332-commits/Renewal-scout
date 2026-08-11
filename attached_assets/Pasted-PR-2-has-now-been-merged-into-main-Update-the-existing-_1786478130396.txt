@@ -1,0 +1,57 @@
+PR #2 has now been merged into main. Update the existing PR #3 branch so it includes the session-login fix from main.
+
+Do not create another branch or pull request. Do not make additional application changes.
+
+1. Confirm the working tree is clean:
+   git status --short
+
+   If it is not clean, stop and report the files. Do not discard anything.
+
+2. Fetch the latest GitHub changes:
+   git fetch origin
+
+3. Confirm origin/main contains the merged PR #2 session fix:
+   - lib/db/drizzle/0008_create_user_sessions.sql exists
+   - lib/db/drizzle/meta/_journal.json contains 0008_create_user_sessions
+   - artifacts/api-server/src/lib/session.ts contains createTableIfMissing: false
+   - artifacts/api-server/tests/session-fix.test.ts exists
+
+   If any are missing, stop and report that PR #2 is not present in origin/main.
+
+4. Switch to the existing PR #3 branch:
+   git switch agent/fix-service-detail-hook-order
+
+5. Confirm the working tree is still clean, then merge the latest main into it:
+   git merge origin/main
+
+   Do not rebase, force-push, reset or discard files.
+   If there is a merge conflict, stop and report the exact conflicting files.
+
+6. Confirm the resulting branch contains both corrections:
+   - the migration 0008 session fix from PR #2
+   - the service-detail React hook-order fix from PR #3
+   - the polling useEffect appears before the loading and missing-detail early returns
+   - there is only one isResearching declaration and one polling useEffect
+
+7. Run:
+   pnpm install --frozen-lockfile
+   pnpm run typecheck
+   pnpm --filter @workspace/api-server test -- --reporter=dot
+   pnpm run build
+
+8. The API test result should be 266/266. If it is not 266/266, stop and explain exactly which test files are present and why the count differs.
+
+9. Start the app and verify:
+   - login succeeds
+   - GET /api/auth/me remains authenticated
+   - the dashboard opens
+   - the existing service opens without “Rendered more hooks than during the previous render”
+   - Requirements and Current Deal tabs open
+   - refreshing the service page directly works
+
+10. Push the updated existing branch:
+    git push origin agent/fix-service-detail-hook-order
+
+11. Confirm that existing draft PR #3 was updated. Do not open a duplicate PR and do not merge it.
+
+Report the final commit SHA, verification results and PR #3 status.
