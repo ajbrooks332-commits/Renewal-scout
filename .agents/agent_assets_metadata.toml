@@ -26,5 +26,5 @@ description = "The entire codebase in one plain-text file (33,642 lines). Handy 
 id = "Gf7hsjbhVkYlDoAW0Lhl-"
 uri = "file://renewal-scout-review.zip"
 type = "unspecified"
-title = "Renewal Scout — Codebase + Build (for ChatGPT review)"
-description = "Complete source code (290 files) plus the fresh production build output for both the API server and frontend. 4.1 MB ZIP, no secrets or env files included. Upload this directly to ChatGPT on Android."
+title = "renewal-scout-review.zip — Full codebase + build"
+description = "317 files, 4.1 MB. Source code, migrations, tests, and compiled build output. No secrets or env files. Download and upload directly to ChatGPT on your PC."
