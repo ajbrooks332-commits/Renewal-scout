@@ -64,6 +64,12 @@ export const GetDashboardStatsResponse = zod.object({
 /**
  * @summary Get the household profile
  */
+export const getHouseholdProfileResponseVehiclesItemMakeMax = 100;
+
+export const getHouseholdProfileResponseVehiclesItemModelMax = 100;
+
+
+
 export const GetHouseholdProfileResponse = zod.object({
   "id": zod.number(),
   "postcode": zod.string().nullish(),
@@ -94,6 +100,16 @@ export const GetHouseholdProfileResponse = zod.object({
   "smoker": zod.boolean().nullish(),
   "accessibilityNeeds": zod.string().nullish(),
   "generalPreferences": zod.string().nullish(),
+  "vehicles": zod.array(zod.object({
+  "make": zod.string().max(getHouseholdProfileResponseVehiclesItemMakeMax).nullish(),
+  "model": zod.string().max(getHouseholdProfileResponseVehiclesItemModelMax).nullish(),
+  "year": zod.number().nullish(),
+  "valuePence": zod.number().nullish(),
+  "annualMileage": zod.number().nullish(),
+  "drivingExperience": zod.string().nullish(),
+  "claimsLast5Years": zod.number().nullish()
+}).describe('A single vehicle entry. All fields optional — partial saves are valid.')).optional().describe('Multi-vehicle array. All vehicle fields are optional to support in-progress questionnaire saves.'),
+  "unknownFields": zod.array(zod.string()).optional().describe('Field names the user explicitly marked as \"I don\'t know\"'),
   "questionnaireVersion": zod.string(),
   "updatedAt": zod.string(),
   "createdAt": zod.string()
@@ -114,6 +130,10 @@ export const updateHouseholdProfileBodyCarModelMax = 80;
 export const updateHouseholdProfileBodyAccessibilityNeedsMax = 500;
 
 export const updateHouseholdProfileBodyGeneralPreferencesMax = 500;
+
+export const updateHouseholdProfileBodyVehiclesItemMakeMax = 100;
+
+export const updateHouseholdProfileBodyVehiclesItemModelMax = 100;
 
 
 
@@ -145,8 +165,24 @@ export const UpdateHouseholdProfileBody = zod.object({
   "claimsLast5Years": zod.number().nullish(),
   "smoker": zod.boolean().nullish(),
   "accessibilityNeeds": zod.string().max(updateHouseholdProfileBodyAccessibilityNeedsMax).nullish(),
-  "generalPreferences": zod.string().max(updateHouseholdProfileBodyGeneralPreferencesMax).nullish()
+  "generalPreferences": zod.string().max(updateHouseholdProfileBodyGeneralPreferencesMax).nullish(),
+  "vehicles": zod.array(zod.object({
+  "make": zod.string().max(updateHouseholdProfileBodyVehiclesItemMakeMax).nullish(),
+  "model": zod.string().max(updateHouseholdProfileBodyVehiclesItemModelMax).nullish(),
+  "year": zod.number().nullish(),
+  "valuePence": zod.number().nullish(),
+  "annualMileage": zod.number().nullish(),
+  "drivingExperience": zod.string().nullish(),
+  "claimsLast5Years": zod.number().nullish()
+}).describe('A single vehicle entry. All fields optional — partial saves are valid.')).optional().describe('Multi-vehicle array. All fields optional to support partial saves.'),
+  "unknownFields": zod.array(zod.string()).optional().describe('Field names the user explicitly marked as \"I don\'t know\"')
 })
+
+export const updateHouseholdProfileResponseVehiclesItemMakeMax = 100;
+
+export const updateHouseholdProfileResponseVehiclesItemModelMax = 100;
+
+
 
 export const UpdateHouseholdProfileResponse = zod.object({
   "id": zod.number(),
@@ -178,6 +214,16 @@ export const UpdateHouseholdProfileResponse = zod.object({
   "smoker": zod.boolean().nullish(),
   "accessibilityNeeds": zod.string().nullish(),
   "generalPreferences": zod.string().nullish(),
+  "vehicles": zod.array(zod.object({
+  "make": zod.string().max(updateHouseholdProfileResponseVehiclesItemMakeMax).nullish(),
+  "model": zod.string().max(updateHouseholdProfileResponseVehiclesItemModelMax).nullish(),
+  "year": zod.number().nullish(),
+  "valuePence": zod.number().nullish(),
+  "annualMileage": zod.number().nullish(),
+  "drivingExperience": zod.string().nullish(),
+  "claimsLast5Years": zod.number().nullish()
+}).describe('A single vehicle entry. All fields optional — partial saves are valid.')).optional().describe('Multi-vehicle array. All vehicle fields are optional to support in-progress questionnaire saves.'),
+  "unknownFields": zod.array(zod.string()).optional().describe('Field names the user explicitly marked as \"I don\'t know\"'),
   "questionnaireVersion": zod.string(),
   "updatedAt": zod.string(),
   "createdAt": zod.string()
@@ -367,10 +413,17 @@ export const GetServiceResponse = zod.object({
   "comparisonBasedOn": zod.array(zod.string()).optional().describe('List of assumptions\/data used in the comparison')
 }).optional(),
   "completenessReport": zod.object({
-  "required": zod.array(zod.string()).describe('Required fields that are missing — blocks research if non-empty'),
-  "recommended": zod.array(zod.string()).describe('Recommended fields that are missing — shows warning but allows proceeding'),
-  "optional": zod.array(zod.string()).describe('Optional fields that are not filled in'),
-  "blocking": zod.boolean().describe('true if any required fields are missing')
+  "required": zod.array(zod.object({
+  "label": zod.string().describe('Human-readable field label shown in the completeness gate UI'),
+  "destination": zod.enum(['household', 'requirements', 'current-deal']).describe('Which page\/tab contains the input for this field')
+}).describe('A field that is missing, with a label and destination for navigation')).describe('Required fields that are missing — blocks research if non-empty'),
+  "recommended": zod.array(zod.object({
+  "label": zod.string().describe('Human-readable field label shown in the completeness gate UI'),
+  "destination": zod.enum(['household', 'requirements', 'current-deal']).describe('Which page\/tab contains the input for this field')
+}).describe('A field that is missing, with a label and destination for navigation')).describe('Recommended fields that are missing — shows warning but allows proceeding'),
+  "optional": zod.array(zod.string()).describe('Optional fields that are not filled in (labels only)'),
+  "blocking": zod.boolean().describe('true if any required fields are missing'),
+  "researchMode": zod.enum(['personalised', 'generic']).describe('Derived research mode. \"personalised\" when no required fields are missing; \"generic\" when blocking fields remain (research proceeds with generic prompts).\n')
 })
 })
 
@@ -482,6 +535,7 @@ export const GetServiceRequirementsResponse = zod.object({
   "serviceId": zod.number(),
   "schemaVersion": zod.string(),
   "fields": zod.record(zod.string(), zod.unknown()).describe('Service-type-specific requirement answers (values may be null = \"I don\'t know\")'),
+  "unknownFields": zod.array(zod.string()).optional().describe('Field names the user explicitly marked as \"I don\'t know\" (for UI state recovery)'),
   "updatedAt": zod.string()
 })
 
@@ -494,13 +548,15 @@ export const UpdateServiceRequirementsParams = zod.object({
 })
 
 export const UpdateServiceRequirementsBody = zod.object({
-  "fields": zod.record(zod.string(), zod.unknown())
+  "fields": zod.record(zod.string(), zod.unknown()),
+  "unknownFields": zod.array(zod.string()).optional().describe('Field names the user explicitly marked as \"I don\'t know\"')
 })
 
 export const UpdateServiceRequirementsResponse = zod.object({
   "serviceId": zod.number(),
   "schemaVersion": zod.string(),
   "fields": zod.record(zod.string(), zod.unknown()).describe('Service-type-specific requirement answers (values may be null = \"I don\'t know\")'),
+  "unknownFields": zod.array(zod.string()).optional().describe('Field names the user explicitly marked as \"I don\'t know\" (for UI state recovery)'),
   "updatedAt": zod.string()
 })
 
@@ -608,7 +664,8 @@ export const TriggerResearchParams = zod.object({
 })
 
 export const TriggerResearchBody = zod.object({
-  "forceWithMissing": zod.boolean().optional().describe('Pass true to proceed despite missing required fields. The completeness check still warns but does not block.\n')
+  "researchMode": zod.enum(['personalised', 'generic']).optional().describe('Pass \"generic\" to proceed despite missing required fields. Research uses generic prompts instead of personalised ones.\n'),
+  "forceWithMissing": zod.boolean().optional().describe('Deprecated. Use researchMode: \"generic\" instead. Accepted for backward compatibility.\n')
 })
 
 export const TriggerResearchResponse = zod.object({

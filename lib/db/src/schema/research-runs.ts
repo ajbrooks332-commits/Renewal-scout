@@ -3,6 +3,7 @@ import {
   serial,
   text,
   integer,
+  boolean,
   timestamp,
   check,
 } from "drizzle-orm/pg-core";
@@ -19,6 +20,12 @@ export const researchRunsTable = pgTable(
       .notNull()
       .references(() => servicesTable.id, { onDelete: "cascade" }),
     trigger: text("trigger").notNull().default("manual"),
+    /**
+     * When true, the research was triggered in generic mode — the AI prompt
+     * omits personal household context and returns public-example results with
+     * a disclaimer. Set when researchMode:"generic" is passed on the API request.
+     */
+    genericMode: boolean("generic_mode").notNull().default(false),
     /**
      * Valid values: queued | running | complete | failed
      * Enforced by the status_check constraint below.

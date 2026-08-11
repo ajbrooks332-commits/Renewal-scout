@@ -22,6 +22,20 @@
       "when": 1786425600000,
       "tag": "0002_reconcile_push_provisioned",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786467600000,
+      "tag": "0003_unknown_fields_vehicles",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786554000000,
+      "tag": "0004_research_runs_generic_mode",
+      "breakpoints": true
     }
   ]
 }

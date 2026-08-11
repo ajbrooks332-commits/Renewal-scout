@@ -5,6 +5,7 @@
  * Renewal Scout API
  * OpenAPI spec version: 0.1.0
  */
+import type { VehicleRecord } from './vehicleRecord';
 
 export interface HouseholdProfile {
   id: number;
@@ -64,6 +65,10 @@ export interface HouseholdProfile {
   accessibilityNeeds?: string | null;
   /** @nullable */
   generalPreferences?: string | null;
+  /** Multi-vehicle array. All vehicle fields are optional to support in-progress questionnaire saves. */
+  vehicles?: VehicleRecord[];
+  /** Field names the user explicitly marked as "I don't know" */
+  unknownFields?: string[];
   questionnaireVersion: string;
   updatedAt: string;
   createdAt: string;

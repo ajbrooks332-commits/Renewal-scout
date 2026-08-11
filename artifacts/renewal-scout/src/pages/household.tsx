@@ -26,6 +26,21 @@ const STEPS = [
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+type VehicleEntry = {
+  make: string | null;
+  model: string | null;
+  year: number | null;
+  valuePence: number | null;
+  annualMileage: number | null;
+  drivingExperience: string | null;
+  claimsLast5Years: number | null;
+};
+
+const EMPTY_VEHICLE: VehicleEntry = {
+  make: null, model: null, year: null, valuePence: null,
+  annualMileage: null, drivingExperience: null, claimsLast5Years: null,
+};
+
 type ProfileDraft = {
   postcode: string | null;
   propertyType: string | null;
@@ -42,6 +57,9 @@ type ProfileDraft = {
   annualElectricityKwh: number | null;
   annualGasKwh: number | null;
   numCars: number | null;
+  /** Multi-vehicle records — numCars > 0 should have ≥1 entry */
+  vehicles: VehicleEntry[];
+  // Legacy single-car convenience aliases (vehicles[0]) — kept for backward compat
   carMake: string | null;
   carModel: string | null;
   carYear: number | null;
@@ -55,6 +73,11 @@ type ProfileDraft = {
   smoker: boolean | null;
   accessibilityNeeds: string | null;
   generalPreferences: string | null;
+  /**
+   * Field names where the user explicitly selected "I don't know".
+   * Used by the completeness check to avoid blocking on acknowledged unknowns.
+   */
+  unknownFields: string[];
 };
 
 const EMPTY: ProfileDraft = {
@@ -63,11 +86,13 @@ const EMPTY: ProfileDraft = {
   heatingType: null, hasEv: null, evChargerType: null,
   hasSolar: null, solarExportTariff: null,
   annualElectricityKwh: null, annualGasKwh: null,
-  numCars: null, carMake: null, carModel: null, carYear: null,
+  numCars: null, vehicles: [],
+  carMake: null, carModel: null, carYear: null,
   carValue: null, annualMileage: null, drivingExperience: null,
   claimsLast5Years: null,
   hasSkyTv: null, hasSkyMobile: null, hasVirginMedia: null,
   smoker: null, accessibilityNeeds: null, generalPreferences: null,
+  unknownFields: [],
 };
 
 // ─── Helper components ────────────────────────────────────────────────────────
@@ -111,17 +136,20 @@ function SelectField({
 }
 
 function YesNoField({
-  value, onChange,
+  value, onChange, onExplicitUnknown,
 }: {
   value: boolean | null;
   onChange: (v: boolean | null) => void;
+  onExplicitUnknown?: (unknown: boolean) => void;
 }) {
   return (
     <Select
       value={value === null ? "__unknown__" : value ? "yes" : "no"}
-      onValueChange={(v) =>
-        onChange(v === "__unknown__" ? null : v === "yes")
-      }
+      onValueChange={(v) => {
+        const isUnknown = v === "__unknown__";
+        onChange(isUnknown ? null : v === "yes");
+        onExplicitUnknown?.(isUnknown);
+      }}
     >
       <SelectTrigger>
         <SelectValue />
@@ -288,63 +316,158 @@ function EnergyStep({ draft, set }: { draft: ProfileDraft; set: (k: keyof Profil
   );
 }
 
+const DRIVING_EXPERIENCE_OPTIONS = [
+  { value: "new_driver", label: "New driver (< 1 year)" },
+  { value: "lt5yrs",     label: "1–4 years" },
+  { value: "5_10yrs",    label: "5–9 years" },
+  { value: "10plus",     label: "10+ years" },
+];
+
+function SingleVehicleForm({
+  vehicle,
+  onChange,
+  label,
+}: {
+  vehicle: VehicleEntry;
+  onChange: (updated: VehicleEntry) => void;
+  label?: string;
+}) {
+  function v<K extends keyof VehicleEntry>(k: K, val: VehicleEntry[K]) {
+    onChange({ ...vehicle, [k]: val });
+  }
+  // Display valuePence as GBP; convert back on input
+  const valueGbp = vehicle.valuePence != null ? vehicle.valuePence / 100 : null;
+
+  return (
+    <div className="space-y-4 rounded-md border p-4 bg-muted/30">
+      {label && <p className="text-sm font-medium text-muted-foreground">{label}</p>}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <FieldLabel>Make</FieldLabel>
+          <Input value={vehicle.make ?? ""} onChange={(e) => v("make", e.target.value || null)} placeholder="e.g. Ford" />
+        </div>
+        <div>
+          <FieldLabel>Model</FieldLabel>
+          <Input value={vehicle.model ?? ""} onChange={(e) => v("model", e.target.value || null)} placeholder="e.g. Focus" />
+        </div>
+      </div>
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <FieldLabel>Year</FieldLabel>
+          <NumberField value={vehicle.year} onChange={(val) => v("year", val)} placeholder="e.g. 2019" min={1950} max={2030} />
+        </div>
+        <div>
+          <FieldLabel>Estimated value (£)</FieldLabel>
+          <NumberField value={valueGbp} onChange={(val) => v("valuePence", val != null ? Math.round(val * 100) : null)} placeholder="e.g. 8000" />
+        </div>
+      </div>
+      <div>
+        <FieldLabel hint="Used to calculate insurance premiums">Annual mileage</FieldLabel>
+        <NumberField value={vehicle.annualMileage} onChange={(val) => v("annualMileage", val)} placeholder="e.g. 8000" />
+      </div>
+      <div>
+        <FieldLabel>Driving experience</FieldLabel>
+        <SelectField value={vehicle.drivingExperience} onChange={(val) => v("drivingExperience", val)} options={DRIVING_EXPERIENCE_OPTIONS} />
+      </div>
+      <div>
+        <FieldLabel hint="At-fault claims only">At-fault claims in last 5 years</FieldLabel>
+        <NumberField value={vehicle.claimsLast5Years} onChange={(val) => v("claimsLast5Years", val)} min={0} max={20} placeholder="0 if none" />
+      </div>
+    </div>
+  );
+}
+
 function VehiclesStep({ draft, set }: { draft: ProfileDraft; set: (k: keyof ProfileDraft, v: unknown) => void }) {
+  const numCars = draft.numCars ?? 0;
+  const vehicles = draft.vehicles;
+
+  function updateVehicle(index: number, updated: VehicleEntry) {
+    const next = [...vehicles];
+    next[index] = updated;
+    set("vehicles", next);
+    // Also sync legacy single-car fields from vehicle[0]
+    if (index === 0) {
+      set("carMake", updated.make);
+      set("carModel", updated.model);
+      set("carYear", updated.year);
+      set("carValue", updated.valuePence != null ? updated.valuePence / 100 : null);
+      set("annualMileage", updated.annualMileage);
+      set("drivingExperience", updated.drivingExperience);
+      set("claimsLast5Years", updated.claimsLast5Years);
+    }
+  }
+
+  function addVehicle() {
+    set("vehicles", [...vehicles, { ...EMPTY_VEHICLE }]);
+  }
+
+  function removeVehicle(index: number) {
+    const next = vehicles.filter((_, i) => i !== index);
+    set("vehicles", next);
+  }
+
+  // When numCars changes, ensure vehicles array has the right length
+  function handleNumCarsChange(n: number | null) {
+    set("numCars", n);
+    if (n == null || n === 0) {
+      set("vehicles", []);
+      return;
+    }
+    const current = vehicles.length;
+    if (current < n) {
+      // Add empty vehicle slots
+      const extra: VehicleEntry[] = Array.from({ length: n - current }, () => ({ ...EMPTY_VEHICLE }));
+      set("vehicles", [...vehicles, ...extra]);
+    }
+    // Don't shrink automatically — let user remove manually if they reduce numCars
+  }
+
   return (
     <div className="space-y-5">
       <div>
         <FieldLabel>Number of cars in household</FieldLabel>
-        <NumberField value={draft.numCars} onChange={(v) => set("numCars", v)} min={0} max={10} />
+        <NumberField value={draft.numCars} onChange={handleNumCarsChange} min={0} max={10} />
       </div>
-      {(draft.numCars ?? 0) > 0 && (
-        <>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <FieldLabel>Car make</FieldLabel>
-              <Input value={draft.carMake ?? ""} onChange={(e) => set("carMake", e.target.value || null)} placeholder="e.g. Ford" />
+
+      {numCars === 1 && (
+        <SingleVehicleForm
+          vehicle={vehicles[0] ?? EMPTY_VEHICLE}
+          onChange={(u) => updateVehicle(0, u)}
+        />
+      )}
+
+      {numCars > 1 && (
+        <div className="space-y-4">
+          {Array.from({ length: Math.max(numCars, vehicles.length) }).map((_, i) => (
+            <div key={i} className="relative">
+              <SingleVehicleForm
+                vehicle={vehicles[i] ?? EMPTY_VEHICLE}
+                onChange={(u) => updateVehicle(i, u)}
+                label={`Vehicle ${i + 1}`}
+              />
+              {i > 0 && (
+                <button
+                  type="button"
+                  onClick={() => removeVehicle(i)}
+                  className="absolute top-3 right-3 text-xs text-destructive hover:underline"
+                >
+                  Remove
+                </button>
+              )}
             </div>
-            <div>
-              <FieldLabel>Car model</FieldLabel>
-              <Input value={draft.carModel ?? ""} onChange={(e) => set("carModel", e.target.value || null)} placeholder="e.g. Focus" />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <FieldLabel>Year of manufacture</FieldLabel>
-              <NumberField value={draft.carYear} onChange={(v) => set("carYear", v)} placeholder="e.g. 2019" min={1950} max={2030} />
-            </div>
-            <div>
-              <FieldLabel>Estimated car value (£)</FieldLabel>
-              <NumberField value={draft.carValue} onChange={(v) => set("carValue", v)} placeholder="e.g. 8000" />
-            </div>
-          </div>
-          <div>
-            <FieldLabel hint="Used to calculate insurance premiums">Annual mileage</FieldLabel>
-            <NumberField value={draft.annualMileage} onChange={(v) => set("annualMileage", v)} placeholder="e.g. 8000" />
-          </div>
-          <div>
-            <FieldLabel>Driving experience</FieldLabel>
-            <SelectField
-              value={draft.drivingExperience}
-              onChange={(v) => set("drivingExperience", v)}
-              options={[
-                { value: "new_driver", label: "New driver (< 1 year)" },
-                { value: "lt5yrs", label: "1–4 years" },
-                { value: "5_10yrs", label: "5–9 years" },
-                { value: "10plus", label: "10+ years" },
-              ]}
-            />
-          </div>
-          <div>
-            <FieldLabel hint="At-fault claims only">At-fault claims in last 5 years</FieldLabel>
-            <NumberField value={draft.claimsLast5Years} onChange={(v) => set("claimsLast5Years", v)} min={0} max={20} placeholder="0 if none" />
-          </div>
-        </>
+          ))}
+          {vehicles.length < numCars && (
+            <Button variant="outline" size="sm" onClick={addVehicle} type="button">
+              + Add vehicle
+            </Button>
+          )}
+        </div>
       )}
     </div>
   );
 }
 
-function BundlesStep({ draft, set }: { draft: ProfileDraft; set: (k: keyof ProfileDraft, v: unknown) => void }) {
+function BundlesStep({ draft, set, setBool }: { draft: ProfileDraft; set: (k: keyof ProfileDraft, v: unknown) => void; setBool: (k: keyof ProfileDraft, v: boolean | null) => void }) {
   return (
     <div className="space-y-5">
       <p className="text-sm text-muted-foreground">
@@ -352,19 +475,19 @@ function BundlesStep({ draft, set }: { draft: ProfileDraft; set: (k: keyof Profi
       </p>
       <div>
         <FieldLabel>Do you have a Sky TV subscription?</FieldLabel>
-        <YesNoField value={draft.hasSkyTv} onChange={(v) => set("hasSkyTv", v)} />
+        <YesNoField value={draft.hasSkyTv} onChange={(v) => setBool("hasSkyTv", v)} />
       </div>
       <div>
         <FieldLabel>Do you have a Sky Mobile subscription?</FieldLabel>
-        <YesNoField value={draft.hasSkyMobile} onChange={(v) => set("hasSkyMobile", v)} />
+        <YesNoField value={draft.hasSkyMobile} onChange={(v) => setBool("hasSkyMobile", v)} />
       </div>
       <div>
         <FieldLabel>Do you have Virgin Media (any product)?</FieldLabel>
-        <YesNoField value={draft.hasVirginMedia} onChange={(v) => set("hasVirginMedia", v)} />
+        <YesNoField value={draft.hasVirginMedia} onChange={(v) => setBool("hasVirginMedia", v)} />
       </div>
       <div className="border-t pt-5">
         <FieldLabel hint="Used only for life insurance research to find appropriate cover amounts">Are you a smoker?</FieldLabel>
-        <YesNoField value={draft.smoker} onChange={(v) => set("smoker", v)} />
+        <YesNoField value={draft.smoker} onChange={(v) => setBool("smoker", v)} />
       </div>
       <div>
         <FieldLabel hint="e.g. step-free access required, large-print communications">Accessibility needs</FieldLabel>
@@ -455,6 +578,36 @@ export default function HouseholdPage() {
   // Load existing profile into draft on mount
   useEffect(() => {
     if (!profile) return;
+
+    // Reconstruct VehicleEntry list from API vehicles array (or single-car fields).
+    // profile.vehicles is now part of the generated HouseholdProfile type.
+    const apiVehicles = profile.vehicles ?? [];
+
+    const vehicles: VehicleEntry[] = apiVehicles.length > 0
+      ? apiVehicles.map((v) => ({
+          make: v.make ?? null,
+          model: v.model ?? null,
+          year: v.year ?? null,
+          valuePence: v.valuePence ?? null,
+          annualMileage: v.annualMileage ?? null,
+          drivingExperience: v.drivingExperience ?? null,
+          claimsLast5Years: v.claimsLast5Years ?? null,
+        }))
+      : (profile.carMake
+          ? [{
+              make: profile.carMake,
+              model: profile.carModel ?? null,
+              year: profile.carYear ?? null,
+              valuePence: profile.carValue != null ? Math.round(profile.carValue * 100) : null,
+              annualMileage: profile.annualMileage ?? null,
+              drivingExperience: profile.drivingExperience ?? null,
+              claimsLast5Years: profile.claimsLast5Years ?? null,
+            }]
+          : []);
+
+    // profile.unknownFields is now part of the generated HouseholdProfile type.
+    const unknownFields: string[] = profile.unknownFields ?? [];
+
     setDraft({
       postcode: profile.postcode ?? null,
       propertyType: profile.propertyType ?? null,
@@ -471,6 +624,7 @@ export default function HouseholdPage() {
       annualElectricityKwh: profile.annualElectricityKwh ?? null,
       annualGasKwh: profile.annualGasKwh ?? null,
       numCars: profile.numCars ?? null,
+      vehicles,
       carMake: profile.carMake ?? null,
       carModel: profile.carModel ?? null,
       carYear: profile.carYear ?? null,
@@ -484,6 +638,7 @@ export default function HouseholdPage() {
       smoker: profile.smoker ?? null,
       accessibilityNeeds: profile.accessibilityNeeds ?? null,
       generalPreferences: profile.generalPreferences ?? null,
+      unknownFields,
     });
   }, [profile?.updatedAt]);
 
@@ -492,8 +647,93 @@ export default function HouseholdPage() {
     setDraft((d) => ({ ...d, [key]: value }));
   }
 
+  /** Mark a boolean field as "explicitly I don't know" (or clear that mark). */
+  function setBoolWithUnknown(key: keyof ProfileDraft, value: boolean | null) {
+    setDraft((d) => {
+      const uf = d.unknownFields;
+      const newUf = value === null
+        ? [...new Set([...uf, String(key)])]
+        : uf.filter((k) => k !== String(key));
+      return { ...d, [key]: value, unknownFields: newUf };
+    });
+    setSaved(false);
+  }
+
+  /** Build the API payload from the current draft. */
+  function buildPayload() {
+    // Filter out vehicle entries where ALL fields are null (empty slots created
+    // when numCars is set before vehicle details are filled in).
+    const apiVehicles = draft.vehicles
+      .filter(
+        (v) =>
+          v.make != null ||
+          v.model != null ||
+          v.year != null ||
+          v.valuePence != null ||
+          v.annualMileage != null ||
+          v.drivingExperience != null ||
+          v.claimsLast5Years != null,
+      )
+      .map((v) => ({
+        // All vehicle fields are nullable in VehicleInput — partial saves are fine.
+        make:              v.make ?? undefined,
+        model:             v.model ?? undefined,
+        year:              v.year ?? undefined,
+        valuePence:        v.valuePence ?? undefined,
+        annualMileage:     v.annualMileage ?? undefined,
+        drivingExperience: v.drivingExperience ?? undefined,
+        claimsLast5Years:  v.claimsLast5Years ?? undefined,
+      }));
+
+    // Decide what to send for the vehicles key:
+    //  • numCars === 0 → always send [] so the API clears legacy car columns.
+    //  • vehicles have data → send the array (API syncs legacy cols from [0]).
+    //  • vehicles are empty but numCars > 0 → send undefined; user hasn't filled
+    //    in details yet and we don't want to wipe data that might be in the DB.
+    const vehiclesPayload: typeof apiVehicles | [] | undefined =
+      draft.numCars === 0
+        ? []
+        : apiVehicles.length > 0
+          ? apiVehicles
+          : undefined;
+
+    // Exclude legacy scalar car-alias fields (carMake, carModel, carYear,
+    // carValue, annualMileage, drivingExperience, claimsLast5Years) from the
+    // payload whenever we are sending a vehicles array.  The API route derives
+    // those columns from vehicles[0]; if we also send the null scalar aliases
+    // they take precedence (they are !== undefined in the patch) and the
+    // vehicles[0] sync logic is skipped, leaving stale or null values in the
+    // legacy columns even when the vehicles array has data.
+    const {
+      carMake: _cm,
+      carModel: _cmo,
+      carYear: _cy,
+      carValue: _cv,
+      annualMileage: _am,
+      drivingExperience: _de,
+      claimsLast5Years: _cl,
+      vehicles: _v,
+      ...rest
+    } = draft;
+
+    if (vehiclesPayload !== undefined) {
+      // Send vehicles — legacy scalar aliases omitted intentionally so the API
+      // can derive them from vehicles[0] without interference.
+      return { ...rest, vehicles: vehiclesPayload, unknownFields: draft.unknownFields };
+    }
+
+    // No vehicles update — include the legacy scalar aliases so the user can
+    // still save car details through the legacy single-car path if needed.
+    return {
+      ...rest,
+      carMake: _cm, carModel: _cmo, carYear: _cy, carValue: _cv,
+      annualMileage: _am, drivingExperience: _de, claimsLast5Years: _cl,
+      unknownFields: draft.unknownFields,
+    };
+  }
+
   function handleSave() {
-    update.mutate({ data: draft as Parameters<typeof update.mutate>[0]["data"] }, {
+    update.mutate({ data: buildPayload() as Parameters<typeof update.mutate>[0]["data"] }, {
       onSuccess: () => {
         setSaved(true);
         toast({ title: "Household profile saved" });
@@ -505,7 +745,7 @@ export default function HouseholdPage() {
   }
 
   function handleSaveLater() {
-    update.mutate({ data: draft as Parameters<typeof update.mutate>[0]["data"] }, {
+    update.mutate({ data: buildPayload() as Parameters<typeof update.mutate>[0]["data"] }, {
       onSuccess: () => {
         setSaved(true);
         toast({ title: "Household profile saved" });
@@ -530,7 +770,7 @@ export default function HouseholdPage() {
       case 1: return <HouseholdStep draft={draft} set={set} />;
       case 2: return <EnergyStep draft={draft} set={set} />;
       case 3: return <VehiclesStep draft={draft} set={set} />;
-      case 4: return <BundlesStep draft={draft} set={set} />;
+      case 4: return <BundlesStep draft={draft} set={set} setBool={setBoolWithUnknown} />;
       case 5: return <ReviewStep draft={draft} />;
       default: return null;
     }

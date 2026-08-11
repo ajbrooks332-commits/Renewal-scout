@@ -5,8 +5,14 @@
  * Renewal Scout API
  * OpenAPI spec version: 0.1.0
  */
+import type { TriggerResearchBodyResearchMode } from './triggerResearchBodyResearchMode';
 
 export type TriggerResearchBody = {
-  /** Pass true to proceed despite missing required fields. The completeness check still warns but does not block. */
+  /** Pass "generic" to proceed despite missing required fields. Research uses generic prompts instead of personalised ones. */
+  researchMode?: TriggerResearchBodyResearchMode;
+  /**
+     * Deprecated. Use researchMode: "generic" instead. Accepted for backward compatibility.
+     * @deprecated
+     */
   forceWithMissing?: boolean;
 };

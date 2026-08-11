@@ -179,7 +179,42 @@ interface ResearchContext {
   comparisonBasedOn: string[];
 }
 
-function buildPrompt(service: Service, ctx: ResearchContext): string {
+/**
+ * Build the research prompt.
+ *
+ * When `genericMode` is true, personal household context is omitted and the
+ * AI is instructed to return generic public-example results with a disclaimer,
+ * rather than personalised comparisons. This is the correct behaviour when the
+ * user triggers research despite having incomplete profile/requirements data.
+ */
+function buildPrompt(
+  service: Service,
+  ctx: ResearchContext,
+  genericMode = false,
+): string {
+  if (genericMode) {
+    // Generic mode: no personal data. Return publicly available market examples
+    // with an explicit disclaimer. The user can re-run once their profile is complete.
+    const payload = {
+      service_type: service.serviceType,
+      current_provider: service.provider,
+      research_date: new Date().toISOString().slice(0, 10),
+      mode: "generic_public_examples",
+      disclaimer:
+        "Household profile is incomplete. Results are generic market examples only — " +
+        "not personalised. Fill in your profile and re-run for accurate comparisons.",
+    };
+    return (
+      "Research this service type and produce a GENERIC market overview (not personalised). " +
+      "The user has incomplete profile data, so return publicly available example deals only. " +
+      "Include a prominent disclaimer that results are generic and not tailored to the user. " +
+      "Do not attempt to personalise or use profile data that is not provided. " +
+      "Produce up to three example deals typical for the UK market for this service type.\n\n" +
+      JSON.stringify(payload, null, 2)
+    );
+  }
+
+  // Personalised mode: include full household context.
   // Only confirmed deal fields (source=user or extracted_confirmed) for research
   const confirmedDealSummary: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(ctx.confirmedDeal)) {
@@ -332,7 +367,7 @@ export async function executeResearch(runId: number): Promise<void> {
       comparisonBasedOn,
     };
 
-    const prompt = buildPrompt(service, ctx);
+    const prompt = buildPrompt(service, ctx, run.genericMode);
     const model = process.env["OPENAI_MODEL"] ?? "gpt-4o";
 
     const response = await openai.responses.create({
@@ -430,6 +465,7 @@ export async function executeResearch(runId: number): Promise<void> {
 export async function queueResearch(
   serviceId: number,
   trigger: string = "manual",
+  genericMode: boolean = false,
 ): Promise<number> {
   const [service] = await db
     .select()
@@ -461,7 +497,7 @@ export async function queueResearch(
   // collapse any race that slipped past the application-level check above.
   const inserted = await db
     .insert(researchRunsTable)
-    .values({ serviceId, trigger, status: "queued" })
+    .values({ serviceId, trigger, genericMode, status: "queued" })
     .onConflictDoNothing()
     .returning();
 
@@ -484,9 +520,11 @@ export async function queueResearch(
 
   // Extremely unlikely: the conflicting run completed in the tiny window
   // between our failed insert and this fetch.  Retry without a conflict guard.
+  // genericMode must be preserved here — a request made as generic must not
+  // silently become personalised through this fallback path.
   const [retry] = await db
     .insert(researchRunsTable)
-    .values({ serviceId, trigger, status: "queued" })
+    .values({ serviceId, trigger, genericMode, status: "queued" })
     .returning();
   return retry.id;
 }

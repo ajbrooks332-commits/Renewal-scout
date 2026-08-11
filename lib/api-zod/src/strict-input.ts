@@ -56,6 +56,30 @@ export const StrictUpdateServiceBody = StrictCreateServiceBody;
 // ── Household profile ─────────────────────────────────────────────────────────
 
 /**
+ * A single vehicle object stored in the `vehicles` JSONB array.
+ * At minimum `make` and `model` must be non-empty strings when provided.
+ */
+/**
+ * A single vehicle object stored in the `vehicles` JSONB array.
+ *
+ * All fields are optional so in-progress questionnaire saves work even when
+ * the user has only partially filled in vehicle details (e.g. they set numCars
+ * then come back later to enter make/model). The completeness check decides
+ * whether the data is sufficient for personalised research.
+ */
+export const VehicleInput = z.object({
+  make:              z.string().max(100).nullable().optional(),
+  model:             z.string().max(100).nullable().optional(),
+  year:              z.number().int().min(1900).max(2030).nullable().optional(),
+  valuePence:        NonnegativeInt.nullable().optional(),
+  annualMileage:     NonnegativeInt.nullable().optional(),
+  drivingExperience: z.enum(["new_driver", "lt5yrs", "5_10yrs", "10plus"]).nullable().optional(),
+  claimsLast5Years:  NonnegativeInt.max(20).nullable().optional(),
+});
+
+export type VehicleInput = z.infer<typeof VehicleInput>;
+
+/**
  * Strict body for PUT /household-profile.
  *
  * True PATCH semantics: all fields are optional (absent = untouched).
@@ -67,6 +91,10 @@ export const StrictUpdateServiceBody = StrictCreateServiceBody;
  * String "false" for boolean fields → 400 (must be an actual boolean).
  * Infinite / decimal values for integer fields → 400.
  * Invalid UK postcode → 400.
+ *
+ * New in Task #11:
+ *   - `vehicles`     — array of VehicleInput objects (multi-vehicle)
+ *   - `unknownFields` — names of fields user explicitly said "I don't know"
  */
 export const StrictUpdateHouseholdProfileBody = z
   .object({
@@ -94,7 +122,7 @@ export const StrictUpdateHouseholdProfileBody = z
 
     tenure: z.enum(["owner", "tenant", "other"]).nullable().optional(),
 
-    bedrooms: NonnegativeInt.max(50).nullable().optional(),
+    bedrooms:  NonnegativeInt.max(50).nullable().optional(),
     yearBuilt: z.number().int().min(1800).max(2030).nullable().optional(),
     numAdults: NonnegativeInt.max(100).nullable().optional(),
     numChildren: NonnegativeInt.max(100).nullable().optional(),
@@ -115,16 +143,25 @@ export const StrictUpdateHouseholdProfileBody = z
     solarExportTariff: z.string().max(100).nullable().optional(),
 
     annualElectricityKwh: NonnegativeInt.nullable().optional(),
-    annualGasKwh: NonnegativeInt.nullable().optional(),
+    annualGasKwh:         NonnegativeInt.nullable().optional(),
 
-    hasSkyTv: z.boolean().nullable().optional(),
-    hasSkyMobile: z.boolean().nullable().optional(),
+    hasSkyTv:      z.boolean().nullable().optional(),
+    hasSkyMobile:  z.boolean().nullable().optional(),
     hasVirginMedia: z.boolean().nullable().optional(),
 
     numCars: NonnegativeInt.max(20).nullable().optional(),
-    carMake: z.string().max(80).nullable().optional(),
+
+    /**
+     * Multi-vehicle support. When provided, the API syncs vehicles[0] back
+     * to the legacy single-car columns for backward compatibility.
+     */
+    vehicles: z.array(VehicleInput).nullable().optional(),
+
+    // Legacy single-car fields — kept for backward compat. If `vehicles` is
+    // also present those values take precedence for vehicle[0].
+    carMake:  z.string().max(80).nullable().optional(),
     carModel: z.string().max(80).nullable().optional(),
-    carYear: z.number().int().min(1900).max(2030).nullable().optional(),
+    carYear:  z.number().int().min(1900).max(2030).nullable().optional(),
     // carValue is the API GBP decimal (stored as pence internally)
     carValue: FiniteNonnegativeNumber.nullable().optional(),
 
@@ -139,6 +176,13 @@ export const StrictUpdateHouseholdProfileBody = z
     smoker: z.boolean().nullable().optional(),
     accessibilityNeeds: z.string().max(500).nullable().optional(),
     generalPreferences: z.string().max(500).nullable().optional(),
+
+    /**
+     * Field names where the user explicitly said "I don't know / prefer not
+     * to say". Used by the completeness check to avoid blocking on
+     * acknowledged unknowns.
+     */
+    unknownFields: z.array(z.string().max(80)).optional(),
   })
   .strict();
 
@@ -152,9 +196,13 @@ export type StrictHouseholdProfilePatch = z.infer<
  * Strict body for PUT /services/:id/requirements.
  * Unknown top-level keys → 400. The `fields` record is untyped (values may
  * be any JSON-serialisable value or null).
+ *
+ * `unknownFields`: array of field names the user explicitly marked as
+ * "I don't know" in the UI. Used for answer-state recovery.
  */
 export const StrictUpdateServiceRequirementsBody = z
   .object({
     fields: z.record(z.string(), z.unknown()),
+    unknownFields: z.array(z.string().max(80)).optional(),
   })
   .strict();

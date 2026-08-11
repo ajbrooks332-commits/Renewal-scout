@@ -5,6 +5,7 @@ import {
   boolean,
   timestamp,
   check,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
@@ -13,10 +14,10 @@ import { sql } from "drizzle-orm";
  * Use INSERT … ON CONFLICT (id) DO UPDATE SET … to upsert safely.
  * Never run an unqualified UPDATE against this table.
  *
- * All fields are nullable — NULL means "the user has not answered yet".
- * A separate `unknownFields` convention is used by the application layer
- * (Task C) to distinguish "unanswered" from "explicitly unknown"; the DB
- * stores both as NULL for now and the application adds the distinction.
+ * All nullable fields default to NULL which means "not yet answered".
+ * Fields explicitly marked "I don't know" by the user are tracked via
+ * `unknownFields` — a JSONB array of field names. This lets the
+ * completeness check distinguish "unanswered" from "acknowledged unknown".
  */
 export const householdProfileTable = pgTable(
   "household_profile",
@@ -50,7 +51,19 @@ export const householdProfileTable = pgTable(
     hasVirginMedia: boolean("has_virgin_media"),
 
     // ── Vehicles ───────────────────────────────────────────────────────────
+    /** Number of cars owned — drives completeness logic. */
     numCars: integer("num_cars"),
+
+    /**
+     * Vehicle records for multi-vehicle households.
+     * Array of VehicleRecord objects; see VehicleRecord type below.
+     * Populated via the API; single-car households have one element.
+     * The old scalar car_* columns are retained for backward compatibility
+     * and are kept in sync with vehicles[0] on write.
+     */
+    vehicles: jsonb("vehicles").notNull().default([]),
+
+    // ── Single-car columns (kept for backward compatibility) ──────────────
     carMake: text("car_make"),
     carModel: text("car_model"),
     carYear: integer("car_year"),
@@ -69,6 +82,16 @@ export const householdProfileTable = pgTable(
     // ── Accessibility & preferences ────────────────────────────────────────
     accessibilityNeeds: text("accessibility_needs"),
     generalPreferences: text("general_preferences"),
+
+    // ── Answer-state tracking ──────────────────────────────────────────────
+    /**
+     * JSONB array of field names where the user explicitly said
+     * "I don't know / prefer not to say". These fields are excluded from
+     * blocking completeness checks even though their value is null.
+     *
+     * Example: ["smoker", "annualMileage"]
+     */
+    unknownFields: jsonb("unknown_fields").notNull().default([]),
 
     // ── Metadata ───────────────────────────────────────────────────────────
     questionnaireVersion: text("questionnaire_version").notNull().default("1"),
@@ -91,3 +114,21 @@ export const householdProfileTable = pgTable(
 );
 
 export type HouseholdProfile = typeof householdProfileTable.$inferSelect;
+
+/**
+ * A single vehicle entry stored in the `vehicles` JSONB array.
+ *
+ * All fields are optional/nullable so that partial questionnaire saves work
+ * correctly — a user can set numCars then fill in make/model in a later session.
+ * The completeness check determines whether the data is sufficient for
+ * personalised research.
+ */
+export interface VehicleRecord {
+  make?: string | null;
+  model?: string | null;
+  year?: number | null;
+  valuePence?: number | null;
+  annualMileage?: number | null;
+  drivingExperience?: string | null;
+  claimsLast5Years?: number | null;
+}

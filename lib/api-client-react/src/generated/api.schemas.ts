@@ -31,6 +31,32 @@ export interface DashboardStats {
   dueNow: number;
 }
 
+/**
+ * A single vehicle entry. All fields optional — partial saves are valid.
+ */
+export interface VehicleRecord {
+  /**
+     * @maxLength 100
+     * @nullable
+     */
+  make?: string | null;
+  /**
+     * @maxLength 100
+     * @nullable
+     */
+  model?: string | null;
+  /** @nullable */
+  year?: number | null;
+  /** @nullable */
+  valuePence?: number | null;
+  /** @nullable */
+  annualMileage?: number | null;
+  /** @nullable */
+  drivingExperience?: string | null;
+  /** @nullable */
+  claimsLast5Years?: number | null;
+}
+
 export interface HouseholdProfile {
   id: number;
   /** @nullable */
@@ -89,6 +115,10 @@ export interface HouseholdProfile {
   accessibilityNeeds?: string | null;
   /** @nullable */
   generalPreferences?: string | null;
+  /** Multi-vehicle array. All vehicle fields are optional to support in-progress questionnaire saves. */
+  vehicles?: VehicleRecord[];
+  /** Field names the user explicitly marked as "I don't know" */
+  unknownFields?: string[];
   questionnaireVersion: string;
   updatedAt: string;
   createdAt: string;
@@ -169,6 +199,10 @@ export interface HouseholdProfileInput {
      * @nullable
      */
   generalPreferences?: string | null;
+  /** Multi-vehicle array. All fields optional to support partial saves. */
+  vehicles?: VehicleRecord[];
+  /** Field names the user explicitly marked as "I don't know" */
+  unknownFields?: string[];
 }
 
 /**
@@ -181,6 +215,8 @@ export interface ServiceRequirements {
   schemaVersion: string;
   /** Service-type-specific requirement answers (values may be null = "I don't know") */
   fields: ServiceRequirementsFields;
+  /** Field names the user explicitly marked as "I don't know" (for UI state recovery) */
+  unknownFields?: string[];
   updatedAt: string;
 }
 
@@ -188,6 +224,8 @@ export type ServiceRequirementsInputFields = { [key: string]: unknown };
 
 export interface ServiceRequirementsInput {
   fields: ServiceRequirementsInputFields;
+  /** Field names the user explicitly marked as "I don't know" */
+  unknownFields?: string[];
 }
 
 export type ProvenanceSource = typeof ProvenanceSource[keyof typeof ProvenanceSource];
@@ -252,15 +290,50 @@ export interface ExtractionConfirmInput {
   deletedFields?: string[];
 }
 
+/**
+ * Which page/tab contains the input for this field
+ */
+export type MissingFieldDestination = typeof MissingFieldDestination[keyof typeof MissingFieldDestination];
+
+
+export const MissingFieldDestination = {
+  household: 'household',
+  requirements: 'requirements',
+  'current-deal': 'current-deal',
+} as const;
+
+/**
+ * A field that is missing, with a label and destination for navigation
+ */
+export interface MissingField {
+  /** Human-readable field label shown in the completeness gate UI */
+  label: string;
+  /** Which page/tab contains the input for this field */
+  destination: MissingFieldDestination;
+}
+
+/**
+ * Derived research mode. "personalised" when no required fields are missing; "generic" when blocking fields remain (research proceeds with generic prompts).
+ */
+export type CompletenessReportResearchMode = typeof CompletenessReportResearchMode[keyof typeof CompletenessReportResearchMode];
+
+
+export const CompletenessReportResearchMode = {
+  personalised: 'personalised',
+  generic: 'generic',
+} as const;
+
 export interface CompletenessReport {
   /** Required fields that are missing — blocks research if non-empty */
-  required: string[];
+  required: MissingField[];
   /** Recommended fields that are missing — shows warning but allows proceeding */
-  recommended: string[];
-  /** Optional fields that are not filled in */
+  recommended: MissingField[];
+  /** Optional fields that are not filled in (labels only) */
   optional: string[];
   /** true if any required fields are missing */
   blocking: boolean;
+  /** Derived research mode. "personalised" when no required fields are missing; "generic" when blocking fields remain (research proceeds with generic prompts). */
+  researchMode: CompletenessReportResearchMode;
 }
 
 export interface CompletenessError {
@@ -428,8 +501,24 @@ export type ExtractDocumentBody = {
   document: Blob;
 };
 
+/**
+ * Pass "generic" to proceed despite missing required fields. Research uses generic prompts instead of personalised ones.
+ */
+export type TriggerResearchBodyResearchMode = typeof TriggerResearchBodyResearchMode[keyof typeof TriggerResearchBodyResearchMode];
+
+
+export const TriggerResearchBodyResearchMode = {
+  personalised: 'personalised',
+  generic: 'generic',
+} as const;
+
 export type TriggerResearchBody = {
-  /** Pass true to proceed despite missing required fields. The completeness check still warns but does not block. */
+  /** Pass "generic" to proceed despite missing required fields. Research uses generic prompts instead of personalised ones. */
+  researchMode?: TriggerResearchBodyResearchMode;
+  /**
+     * Deprecated. Use researchMode: "generic" instead. Accepted for backward compatibility.
+     * @deprecated
+     */
   forceWithMissing?: boolean;
 };
 

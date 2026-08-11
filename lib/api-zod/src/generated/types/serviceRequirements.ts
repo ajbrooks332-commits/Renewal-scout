@@ -12,5 +12,7 @@ export interface ServiceRequirements {
   schemaVersion: string;
   /** Service-type-specific requirement answers (values may be null = "I don't know") */
   fields: ServiceRequirementsFields;
+  /** Field names the user explicitly marked as "I don't know" (for UI state recovery) */
+  unknownFields?: string[];
   updatedAt: string;
 }

@@ -1,7 +1,7 @@
 import { useLocation, useParams } from "wouter";
 import { useQueryClient } from "@tanstack/react-query";
 import { useGetService, useTriggerResearch, useArchiveService, getGetServiceQueryKey } from "@workspace/api-client-react";
-import type { CompletenessReport } from "@workspace/api-client-react";
+import type { CompletenessReport, MissingField } from "@workspace/api-client-react";
 import { formatGbp, formatDate, formatDateTime } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
@@ -23,15 +23,23 @@ import { CurrentDealTab } from "@/pages/current-deal-tab";
 
 function CompletenessGate({
   report,
-  onForce,
-  onFix,
+  onGenericResearch,
+  onFixHousehold,
+  onFixRequirements,
+  onFixDeal,
 }: {
   report: CompletenessReport;
-  onForce: () => void;
-  onFix: () => void;
+  onGenericResearch: () => void;
+  onFixHousehold: () => void;
+  onFixRequirements: () => void;
+  onFixDeal: () => void;
 }) {
   const [dismissed, setDismissed] = useState(false);
   if (dismissed) return null;
+
+  const hasHouseholdGap  = report.required.some(f => f.destination === "household") || report.recommended.some(f => f.destination === "household");
+  const hasRequirGap     = report.required.some(f => f.destination === "requirements") || report.recommended.some(f => f.destination === "requirements");
+  const hasDealGap       = report.required.some(f => f.destination === "current-deal") || report.recommended.some(f => f.destination === "current-deal");
 
   if (report.blocking) {
     return (
@@ -41,24 +49,29 @@ function CompletenessGate({
           <div className="flex-1">
             <h4 className="font-medium text-destructive">Required information missing</h4>
             <p className="text-sm text-destructive/80 mt-1">
-              The following fields are needed for accurate research. Please fill them in first.
+              The following fields are needed for personalised research.
             </p>
             <ul className="mt-2 space-y-1">
               {report.required.map((item) => (
-                <li key={item} className="text-sm text-destructive/80 flex items-center gap-2">
+                <li key={item.label} className="text-sm text-destructive/80 flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-destructive shrink-0" />
-                  {item}
+                  {item.label}
                 </li>
               ))}
             </ul>
           </div>
         </div>
-        <div className="flex gap-2 pt-1">
-          <Button size="sm" variant="outline" onClick={onFix}>
-            Fill in household profile
-          </Button>
-          <Button size="sm" variant="ghost" className="text-muted-foreground" onClick={onForce}>
-            Research anyway
+        <div className="flex flex-wrap gap-2 pt-1">
+          {hasHouseholdGap  && <Button size="sm" variant="outline" onClick={onFixHousehold}>Fill in household profile</Button>}
+          {hasRequirGap     && <Button size="sm" variant="outline" onClick={onFixRequirements}>Fill in requirements</Button>}
+          {hasDealGap       && <Button size="sm" variant="outline" onClick={onFixDeal}>Confirm current deal</Button>}
+          <Button
+            size="sm" variant="ghost"
+            className="text-muted-foreground"
+            title="Proceed without personalisation — results will be generic public examples"
+            onClick={onGenericResearch}
+          >
+            Run generic research
           </Button>
         </div>
       </div>
@@ -77,9 +90,9 @@ function CompletenessGate({
             </p>
             <ul className="mt-2 space-y-1">
               {report.recommended.map((item) => (
-                <li key={item} className="text-sm text-amber-700 flex items-center gap-2">
+                <li key={item.label} className="text-sm text-amber-700 flex items-center gap-2">
                   <span className="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0" />
-                  {item}
+                  {item.label}
                 </li>
               ))}
             </ul>
@@ -91,10 +104,10 @@ function CompletenessGate({
             <XCircle className="h-4 w-4" />
           </button>
         </div>
-        <div className="flex gap-2">
-          <Button size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-100" onClick={onFix}>
-            Fill in details
-          </Button>
+        <div className="flex flex-wrap gap-2">
+          {hasHouseholdGap  && <Button size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-100" onClick={onFixHousehold}>Household profile</Button>}
+          {hasRequirGap     && <Button size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-100" onClick={onFixRequirements}>Requirements</Button>}
+          {hasDealGap       && <Button size="sm" variant="outline" className="border-amber-300 text-amber-800 hover:bg-amber-100" onClick={onFixDeal}>Current deal</Button>}
         </div>
       </div>
     );
@@ -113,7 +126,7 @@ export default function ServiceDetailPage() {
   const queryClient = useQueryClient();
   const [sourcesOpen, setSourcesOpen] = useState(false);
   const [comparisonOpen, setComparisonOpen] = useState(false);
-  const [forceResearch, setForceResearch] = useState(false);
+  const [genericMode, setGenericMode] = useState(false);
   const [activeTab, setActiveTab] = useState("overview");
 
   const { data: detail, isLoading } = useGetService(id);
@@ -143,10 +156,12 @@ export default function ServiceDetailPage() {
   }
 
   const { service, runs, latestReport } = detail;
-  const completenessReport = detail.completenessReport as CompletenessReport | undefined;
+  // CompletenessReport is now imported from api-client-react — no cast needed.
+  const completenessReport: CompletenessReport | undefined = detail.completenessReport;
 
-  const handleResearch = (force = false) => {
-    const body = force ? { forceWithMissing: true } : {};
+  const handleResearch = (mode?: "personalised" | "generic") => {
+    const resolvedMode = mode ?? (genericMode ? "generic" : "personalised");
+    const body = { researchMode: resolvedMode };
     triggerResearch.mutate({ id, data: body as Parameters<typeof triggerResearch.mutate>[0]["data"] }, {
       onSuccess: () => {
         toast({ title: "Research started", description: "Refresh in a few minutes to see updates." });
@@ -155,7 +170,6 @@ export default function ServiceDetailPage() {
       onError: (err) => {
         const data = err.data as { error?: string; completenessReport?: CompletenessReport } | undefined;
         if (err.status === 422 && data?.completenessReport) {
-          setForceResearch(true);
           toast({ title: "Missing required info", description: data.error, variant: "destructive" });
         } else {
           toast({ title: "Failed to start research", description: data?.error || "Unknown error", variant: "destructive" });
@@ -176,7 +190,7 @@ export default function ServiceDetailPage() {
   };
 
   const isResearching = runs.some(r => r.status === "queued" || r.status === "running");
-  const showGate = !forceResearch && completenessReport && (completenessReport.blocking || completenessReport.recommended.length > 0);
+  const showGate = !genericMode && completenessReport && (completenessReport.blocking || completenessReport.recommended.length > 0);
 
   return (
     <AppLayout>
@@ -209,7 +223,7 @@ export default function ServiceDetailPage() {
         </div>
         <Button
           size="lg"
-          onClick={() => handleResearch(forceResearch || (!completenessReport?.blocking))}
+          onClick={() => handleResearch()}
           disabled={isResearching || triggerResearch.isPending}
           className="gap-2 shadow-sm"
         >
@@ -226,8 +240,10 @@ export default function ServiceDetailPage() {
         <div className="mb-6">
           <CompletenessGate
             report={completenessReport!}
-            onForce={() => { setForceResearch(true); handleResearch(true); }}
-            onFix={() => setLocation("/household")}
+            onGenericResearch={() => { setGenericMode(true); handleResearch("generic"); }}
+            onFixHousehold={() => setLocation("/household")}
+            onFixRequirements={() => setActiveTab("requirements")}
+            onFixDeal={() => setActiveTab("deal")}
           />
         </div>
       )}
@@ -316,7 +332,7 @@ export default function ServiceDetailPage() {
                   <p className="text-muted-foreground mt-1 max-w-md">
                     Research this service to see current deals and potential savings.
                   </p>
-                  <Button onClick={() => handleResearch(false)} variant="outline" className="mt-6" disabled={isResearching}>
+                  <Button onClick={() => handleResearch()} variant="outline" className="mt-6" disabled={isResearching}>
                     {isResearching ? "Researching…" : "Start Research"}
                   </Button>
                 </CardContent>

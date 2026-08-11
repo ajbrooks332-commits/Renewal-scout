@@ -586,11 +586,18 @@ paths:
             schema:
               type: object
               properties:
+                researchMode:
+                  type: string
+                  enum: [personalised, generic]
+                  description: >
+                    Pass "generic" to proceed despite missing required fields.
+                    Research uses generic prompts instead of personalised ones.
                 forceWithMissing:
                   type: boolean
+                  deprecated: true
                   description: >
-                    Pass true to proceed despite missing required fields.
-                    The completeness check still warns but does not block.
+                    Deprecated. Use researchMode: "generic" instead.
+                    Accepted for backward compatibility.
       responses:
         "202":
           description: Research queued
@@ -611,7 +618,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
         "422":
-          description: Missing required fields — pass forceWithMissing to override
+          description: Missing required fields — pass researchMode:"generic" to override
           content:
             application/json:
               schema:
@@ -777,6 +784,16 @@ components:
           type: ["string", "null"]
         generalPreferences:
           type: ["string", "null"]
+        vehicles:
+          type: array
+          description: Multi-vehicle array. All vehicle fields are optional to support in-progress questionnaire saves.
+          items:
+            $ref: "#/components/schemas/VehicleRecord"
+        unknownFields:
+          type: array
+          description: Field names the user explicitly marked as "I don't know"
+          items:
+            type: string
         questionnaireVersion:
           type: string
         updatedAt:
@@ -854,6 +871,37 @@ components:
         generalPreferences:
           type: ["string", "null"]
           maxLength: 500
+        vehicles:
+          type: array
+          description: Multi-vehicle array. All fields optional to support partial saves.
+          items:
+            $ref: "#/components/schemas/VehicleRecord"
+        unknownFields:
+          type: array
+          description: Field names the user explicitly marked as "I don't know"
+          items:
+            type: string
+
+    VehicleRecord:
+      type: object
+      description: A single vehicle entry. All fields optional — partial saves are valid.
+      properties:
+        make:
+          type: ["string", "null"]
+          maxLength: 100
+        model:
+          type: ["string", "null"]
+          maxLength: 100
+        year:
+          type: ["number", "null"]
+        valuePence:
+          type: ["number", "null"]
+        annualMileage:
+          type: ["number", "null"]
+        drivingExperience:
+          type: ["string", "null"]
+        claimsLast5Years:
+          type: ["number", "null"]
 
     # ─── Service requirements ───────────────────────────────────────────────────
 
@@ -868,6 +916,11 @@ components:
           type: object
           description: Service-type-specific requirement answers (values may be null = "I don't know")
           additionalProperties: true
+        unknownFields:
+          type: array
+          description: Field names the user explicitly marked as "I don't know" (for UI state recovery)
+          items:
+            type: string
         updatedAt:
           type: string
       required:
@@ -882,6 +935,11 @@ components:
         fields:
           type: object
           additionalProperties: true
+        unknownFields:
+          type: array
+          description: Field names the user explicitly marked as "I don't know"
+          items:
+            type: string
       required:
         - fields
 
@@ -981,32 +1039,54 @@ components:
 
     # ─── Completeness ───────────────────────────────────────────────────────────
 
+    MissingField:
+      type: object
+      description: A field that is missing, with a label and destination for navigation
+      properties:
+        label:
+          type: string
+          description: Human-readable field label shown in the completeness gate UI
+        destination:
+          type: string
+          enum: [household, requirements, current-deal]
+          description: Which page/tab contains the input for this field
+      required:
+        - label
+        - destination
+
     CompletenessReport:
       type: object
       properties:
         required:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/MissingField"
           description: Required fields that are missing — blocks research if non-empty
         recommended:
           type: array
           items:
-            type: string
+            $ref: "#/components/schemas/MissingField"
           description: Recommended fields that are missing — shows warning but allows proceeding
         optional:
           type: array
           items:
             type: string
-          description: Optional fields that are not filled in
+          description: Optional fields that are not filled in (labels only)
         blocking:
           type: boolean
           description: true if any required fields are missing
+        researchMode:
+          type: string
+          enum: [personalised, generic]
+          description: >
+            Derived research mode. "personalised" when no required fields are missing;
+            "generic" when blocking fields remain (research proceeds with generic prompts).
       required:
         - required
         - recommended
         - optional
         - blocking
+        - researchMode
 
     CompletenessError:
       type: object

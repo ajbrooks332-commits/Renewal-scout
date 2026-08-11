@@ -9,4 +9,6 @@ import type { ServiceRequirementsInputFields } from './serviceRequirementsInputF
 
 export interface ServiceRequirementsInput {
   fields: ServiceRequirementsInputFields;
+  /** Field names the user explicitly marked as "I don't know" */
+  unknownFields?: string[];
 }

@@ -7,35 +7,116 @@ import { requireAuth } from "../middlewares/require-auth";
 const router: IRouter = Router();
 router.use(requireAuth);
 
-// Known requirement field keys per service type — used to filter unknown field names
-const KNOWN_FIELDS: Record<string, string[]> = {
+/**
+ * Known requirement field keys per service type.
+ *
+ * Fields not in this list are silently discarded on write (the top-level
+ * body keys are strictly validated by the Zod schema; only field names
+ * inside `fields` are filtered here).
+ *
+ * Answer-state semantics:
+ *   Key absent from stored `fields`  → unanswered / never asked
+ *   Key present with null value      → explicitly "I don't know"
+ *   Key present with non-null value  → answered
+ */
+export const KNOWN_FIELDS: Record<string, string[]> = {
+  // ── Broadband ─────────────────────────────────────────────────────────────
+  // Core requirements
   Broadband: [
     "downloadSpeedMbps",
     "uploadSpeedMbps",
+    "simultaneousUsers",
+    "workFromHome",
+    "videoCallsFrequent",
+    "onlineGaming",
+    "streamingHd",
+    "landlineRequired",
+    "fullFibrePreferred",
+    "maxContractMonths",
+    "maxMonthlyBudgetGbp",
+    // Bundle links (links to existing subscriptions)
+    "linkedSkyTv",
+    "linkedSkyMobile",
+    "linkedVirginMedia",
+    "bundleDiscountImportant",
+    "willingToSplitBundle",
+    // Legacy / still supported
     "contractLengthMonths",
     "includesLineRental",
     "tvAddon",
     "homePhoneAddon",
   ],
-  Electricity: ["annualKwh", "tariffType", "greenPreferred", "smartMeter"],
+
+  // ── Electricity ───────────────────────────────────────────────────────────
+  Electricity: [
+    // Tariff preferences
+    "tariffType",        // fixed | variable | tracker | economy7 | any
+    "tariffPreference",  // alias/extension
+    "greenPreferred",
+    "paymentMethod",     // direct_debit | prepay | quarterly
+    // Usage data
+    "annualKwh",
+    "dayNightSplit",     // Economy 7 (boolean)
+    "dayUsagePercent",   // % of usage in peak hours
+    // Smart meter
+    "smartMeter",
+    "smartMeterType",    // SMETS1 | SMETS2 | none
+    // EV-specific energy requirements
+    "evMake",
+    "evModel",
+    "evBatteryCapacityKwh",
+    "evAnnualMileage",
+    "homeChargerKw",
+    "overnightChargingStart", // e.g. "23:00"
+    "overnightChargingEnd",
+    "shiftToOffPeak",
+    // Solar / home battery
+    "solarPanels",
+    "solarExportTariff",
+    "homeBattery",
+    "homeBatteryCapacityKwh",
+  ],
+
+  // ── Gas and electricity ───────────────────────────────────────────────────
   "Gas and electricity": [
+    "tariffType",
+    "tariffPreference",
+    "greenPreferred",
+    "paymentMethod",
     "annualElectricityKwh",
     "annualGasKwh",
-    "tariffType",
-    "greenPreferred",
+    "dayNightSplit",
+    "dayUsagePercent",
     "smartMeter",
+    "smartMeterType",
+    "evMake",
+    "evModel",
+    "evBatteryCapacityKwh",
+    "evAnnualMileage",
+    "homeChargerKw",
+    "overnightChargingStart",
+    "overnightChargingEnd",
+    "shiftToOffPeak",
+    "solarPanels",
+    "solarExportTariff",
+    "homeBattery",
+    "homeBatteryCapacityKwh",
   ],
+
+  // ── Car insurance ─────────────────────────────────────────────────────────
   "Car insurance": [
-    "coverType",
+    "coverType",           // comprehensive | tpft | tpo
     "namedDrivers",
-    "parkingLocation",
+    "parkingLocation",     // garage | driveway | street
     "modifiedVehicle",
     "noClaimsYears",
-    "useType",
+    "useType",             // social | commuting | business
     "voluntaryExcessGbp",
   ],
+
+  // ── Home insurance ────────────────────────────────────────────────────────
   "Home insurance": [
-    "coverType",
+    "coverType",           // buildings_and_contents | buildings_only | contents_only
     "rebuildValueGbp",
     "contentsValueGbp",
     "voluntaryExcessGbp",
@@ -43,20 +124,28 @@ const KNOWN_FIELDS: Record<string, string[]> = {
     "highValueItems",
     "floodRisk",
   ],
+
+  // ── Life insurance ────────────────────────────────────────────────────────
   "Life insurance": [
-    "coverType",
+    "coverType",           // level_term | decreasing_term | whole_of_life
     "coverAmountGbp",
     "termYears",
     "jointPolicy",
     "criticalIllnessCover",
   ],
+
+  // ── Credit card ───────────────────────────────────────────────────────────
   "Credit card": [
-    "primaryUse",
+    "primaryUse",          // purchases | balance_transfer | travel | cashback
     "creditLimitGbp",
     "rewardPreference",
     "balanceTransfer",
   ],
+
+  // ── Loan ──────────────────────────────────────────────────────────────────
   Loan: ["purposeOfLoan", "amountGbp", "termMonths"],
+
+  // ── Mobile phone ─────────────────────────────────────────────────────────
   "Mobile phone": [
     "dataGb",
     "includesHandset",
@@ -93,16 +182,18 @@ router.get("/services/:id/requirements", async (req, res): Promise<void> => {
       serviceId: id,
       schemaVersion: "1",
       fields: {},
+      unknownFields: [],
       updatedAt: new Date().toISOString(),
     });
     return;
   }
 
   res.json({
-    serviceId: req_row.serviceId,
+    serviceId:    req_row.serviceId,
     schemaVersion: req_row.schemaVersion,
-    fields: req_row.fields,
-    updatedAt: req_row.updatedAt.toISOString(),
+    fields:        req_row.fields,
+    unknownFields: req_row.unknownFields ?? [],
+    updatedAt:     req_row.updatedAt.toISOString(),
   });
 });
 
@@ -124,7 +215,7 @@ router.put("/services/:id/requirements", async (req, res): Promise<void> => {
   }
 
   // Validate top-level structure: must have a `fields` object; unknown top-level
-  // keys are rejected.
+  // keys rejected by .strict() in the Zod schema.
   const parsed = StrictUpdateServiceRequirementsBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({
@@ -134,16 +225,23 @@ router.put("/services/:id/requirements", async (req, res): Promise<void> => {
     return;
   }
 
-  // Filter to known fields for this service type — unknown field names are
-  // silently discarded (field names are extensible; only top-level body keys
-  // are strictly validated above).
-  const allowed = KNOWN_FIELDS[service.serviceType] ?? [];
+  // Filter to known fields for this service type.
+  // Unknown field names are silently discarded (extensible — only body keys
+  // are strictly validated above). Key presence (even with null value) is
+  // preserved because null = "I don't know" (not missing).
+  const allowed = new Set(KNOWN_FIELDS[service.serviceType] ?? []);
   const filtered: Record<string, unknown> = {};
-  for (const key of allowed) {
-    if (key in parsed.data.fields) {
+  for (const key of Object.keys(parsed.data.fields)) {
+    if (allowed.has(key)) {
       filtered[key] = parsed.data.fields[key]; // null = "I don't know"
     }
   }
+
+  // unknownFields: array of field names the user explicitly marked as unknown.
+  // Filter to only known fields to avoid storing junk.
+  const unknownFields = (parsed.data.unknownFields ?? []).filter((k) =>
+    allowed.has(k),
+  );
 
   const [existing] = await db
     .select()
@@ -154,23 +252,24 @@ router.put("/services/:id/requirements", async (req, res): Promise<void> => {
   if (existing) {
     [row] = await db
       .update(serviceRequirementsTable)
-      .set({ fields: filtered, updatedAt: new Date() })
+      .set({ fields: filtered, unknownFields, updatedAt: new Date() })
       .where(eq(serviceRequirementsTable.serviceId, id))
       .returning();
   } else {
     [row] = await db
       .insert(serviceRequirementsTable)
-      .values({ serviceId: id, fields: filtered })
+      .values({ serviceId: id, fields: filtered, unknownFields })
       .returning();
   }
 
   res.json({
-    serviceId: row!.serviceId,
+    serviceId:    row!.serviceId,
     schemaVersion: row!.schemaVersion,
-    fields: row!.fields,
-    updatedAt: row!.updatedAt.toISOString(),
+    fields:        row!.fields,
+    unknownFields: row!.unknownFields ?? [],
+    updatedAt:     row!.updatedAt.toISOString(),
   });
 });
 
-export { KNOWN_FIELDS };
+export { KNOWN_FIELDS as default_export };
 export default router;

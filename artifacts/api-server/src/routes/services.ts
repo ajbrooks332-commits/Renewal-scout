@@ -205,24 +205,29 @@ router.post("/services/:id/research", async (req, res): Promise<void> => {
     return;
   }
 
-  // Completeness gate — 422 if blocking fields missing and forceWithMissing not set
-  const body = (req.body ?? {}) as { forceWithMissing?: boolean };
-  if (!body.forceWithMissing) {
-    const completeness = await checkCompleteness(id);
-    if (completeness.blocking) {
-      res.status(422).json({
-        error:
-          "Missing required fields. Provide the missing information or pass forceWithMissing: true to proceed anyway.",
-        missing: completeness.required,
-        completenessReport: completeness,
-      });
-      return;
-    }
+  // Completeness gate: require researchMode: "generic" to proceed without
+  // complete data (replaces the old forceWithMissing: true pattern).
+  const body = (req.body ?? {}) as {
+    researchMode?: "personalised" | "generic";
+    /** @deprecated Use researchMode: "generic" instead */
+    forceWithMissing?: boolean;
+  };
+  const useGenericMode =
+    body.researchMode === "generic" || body.forceWithMissing === true;
+
+  const completeness = await checkCompleteness(id);
+  if (completeness.blocking && !useGenericMode) {
+    res.status(422).json({
+      error:
+        "Required information is missing. Fill in the missing fields for personalised research, or pass researchMode: 'generic' to proceed with non-personalised public examples.",
+      completenessReport: completeness,
+    });
+    return;
   }
 
   let runId: number;
   try {
-    runId = await queueResearch(id, "manual");
+    runId = await queueResearch(id, "manual", useGenericMode);
   } catch (err) {
     res.status(404).json({ error: (err as Error).message });
     return;

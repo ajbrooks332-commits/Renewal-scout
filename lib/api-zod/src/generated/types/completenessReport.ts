@@ -5,14 +5,18 @@
  * Renewal Scout API
  * OpenAPI spec version: 0.1.0
  */
+import type { CompletenessReportResearchMode } from './completenessReportResearchMode';
+import type { MissingField } from './missingField';
 
 export interface CompletenessReport {
   /** Required fields that are missing — blocks research if non-empty */
-  required: string[];
+  required: MissingField[];
   /** Recommended fields that are missing — shows warning but allows proceeding */
-  recommended: string[];
-  /** Optional fields that are not filled in */
+  recommended: MissingField[];
+  /** Optional fields that are not filled in (labels only) */
   optional: string[];
   /** true if any required fields are missing */
   blocking: boolean;
+  /** Derived research mode. "personalised" when no required fields are missing; "generic" when blocking fields remain (research proceeds with generic prompts). */
+  researchMode: CompletenessReportResearchMode;
 }
