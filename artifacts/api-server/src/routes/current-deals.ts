@@ -1,6 +1,12 @@
 import { Router, type IRouter } from "express";
 import { eq } from "drizzle-orm";
-import { db, servicesTable, currentDealsTable, documentExtractionsTable } from "@workspace/db";
+import {
+  db,
+  servicesTable,
+  currentDealsTable,
+  documentExtractionsTable,
+} from "@workspace/db";
+import { parseRouteId } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/require-auth";
 import { randomUUID } from "crypto";
 import multer from "multer";
@@ -59,11 +65,6 @@ const DealFieldsSchema = z.record(z.string(), ProvenanceFieldSchema);
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function parseId(raw: string | undefined): number | null {
-  const n = parseInt(raw ?? "", 10);
-  return isNaN(n) ? null : n;
-}
-
 function dealToApi(row: typeof currentDealsTable.$inferSelect) {
   return {
     serviceId: row.serviceId,
@@ -84,18 +85,29 @@ async function getOrCreateDeal(serviceId: number) {
 // ─── GET /services/:id/current-deal ───────────────────────────────────────────
 
 router.get("/services/:id/current-deal", async (req, res): Promise<void> => {
-  const id = parseId(req.params["id"]);
-  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const id = parseRouteId(req.params["id"]);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id: must be a positive integer." });
+    return;
+  }
 
   const [service] = await db
     .select()
     .from(servicesTable)
     .where(eq(servicesTable.id, id));
-  if (!service) { res.status(404).json({ error: "Service not found." }); return; }
+  if (!service) {
+    res.status(404).json({ error: "Service not found." });
+    return;
+  }
 
   const deal = await getOrCreateDeal(id);
   if (!deal) {
-    res.json({ serviceId: id, fields: {}, lastConfirmedAt: null, updatedAt: new Date().toISOString() });
+    res.json({
+      serviceId: id,
+      fields: {},
+      lastConfirmedAt: null,
+      updatedAt: new Date().toISOString(),
+    });
     return;
   }
   res.json(dealToApi(deal));
@@ -104,18 +116,28 @@ router.get("/services/:id/current-deal", async (req, res): Promise<void> => {
 // ─── PUT /services/:id/current-deal ───────────────────────────────────────────
 
 router.put("/services/:id/current-deal", async (req, res): Promise<void> => {
-  const id = parseId(req.params["id"]);
-  if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+  const id = parseRouteId(req.params["id"]);
+  if (!id) {
+    res.status(400).json({ error: "Invalid id: must be a positive integer." });
+    return;
+  }
 
   const [service] = await db
     .select()
     .from(servicesTable)
     .where(eq(servicesTable.id, id));
-  if (!service) { res.status(404).json({ error: "Service not found." }); return; }
+  if (!service) {
+    res.status(404).json({ error: "Service not found." });
+    return;
+  }
 
-  const parsed = DealFieldsSchema.safeParse((req.body as { fields?: unknown })?.fields);
+  const parsed = DealFieldsSchema.safeParse(
+    (req.body as { fields?: unknown })?.fields,
+  );
   if (!parsed.success) {
-    res.status(400).json({ error: "Invalid fields: " + parsed.error.message });
+    res.status(400).json({
+      error: "Invalid fields: " + parsed.error.message,
+    });
     return;
   }
 
@@ -184,9 +206,17 @@ const EXTRACTION_SCHEMA = {
     notes: { type: ["string", "null"] },
   },
   required: [
-    "provider", "tariffName", "monthlyCostGbp", "annualCostGbp",
-    "renewalDate", "contractEndDate", "exitFeeGbp", "noticeDays",
-    "inclusions", "exclusions", "notes",
+    "provider",
+    "tariffName",
+    "monthlyCostGbp",
+    "annualCostGbp",
+    "renewalDate",
+    "contractEndDate",
+    "exitFeeGbp",
+    "noticeDays",
+    "inclusions",
+    "exclusions",
+    "notes",
   ],
   additionalProperties: false,
 };
@@ -195,26 +225,43 @@ router.post(
   "/services/:id/extract-document",
   (req, res, next) => {
     upload.single("document")(req, res, (err) => {
-      if (err instanceof multer.MulterError && err.code === "LIMIT_FILE_SIZE") {
-        res.status(413).json({ error: "File too large. Maximum size is 10 MB." });
+      if (
+        err instanceof multer.MulterError &&
+        err.code === "LIMIT_FILE_SIZE"
+      ) {
+        res
+          .status(413)
+          .json({ error: "File too large. Maximum size is 10 MB." });
         return;
       }
-      if (err) { next(err); return; }
+      if (err) {
+        next(err);
+        return;
+      }
       next();
     });
   },
   async (req, res): Promise<void> => {
-    const id = parseId(req.params["id"]);
-    if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+    const id = parseRouteId(req.params["id"]);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id: must be a positive integer." });
+      return;
+    }
 
     const [service] = await db
       .select()
       .from(servicesTable)
       .where(eq(servicesTable.id, id));
-    if (!service) { res.status(404).json({ error: "Service not found." }); return; }
+    if (!service) {
+      res.status(404).json({ error: "Service not found." });
+      return;
+    }
 
     const file = req.file;
-    if (!file) { res.status(400).json({ error: "No document uploaded." }); return; }
+    if (!file) {
+      res.status(400).json({ error: "No document uploaded." });
+      return;
+    }
 
     // Validate MIME type from actual file bytes (not the client-supplied header)
     const detected = await fileTypeFromBuffer(file.buffer);
@@ -228,7 +275,9 @@ router.post(
 
     const apiKey = process.env["OPENAI_API_KEY"];
     if (!apiKey) {
-      res.status(503).json({ error: "AI extraction is not configured (OPENAI_API_KEY missing)." });
+      res.status(503).json({
+        error: "AI extraction is not configured (OPENAI_API_KEY missing).",
+      });
       return;
     }
 
@@ -289,9 +338,12 @@ Return a JSON object matching the schema.`,
       const outputText = response.output_text;
       if (!outputText) throw new Error("No output from AI extraction.");
 
-      const parsed = ExtractionOutputSchema.safeParse(JSON.parse(outputText));
-      if (!parsed.success) throw new Error("AI extraction output failed schema validation.");
-      extractedValues = parsed.data;
+      const parsedOutput = ExtractionOutputSchema.safeParse(
+        JSON.parse(outputText),
+      );
+      if (!parsedOutput.success)
+        throw new Error("AI extraction output failed schema validation.");
+      extractedValues = parsedOutput.data;
     } catch (err) {
       logger.error({ err, serviceId: id }, "Document extraction failed");
       res.status(500).json({ error: "AI extraction failed. Please try again." });
@@ -339,8 +391,11 @@ Return a JSON object matching the schema.`,
 router.put(
   "/services/:id/extraction-draft/:extractionId/confirm",
   async (req, res): Promise<void> => {
-    const id = parseId(req.params["id"]);
-    if (!id) { res.status(400).json({ error: "Invalid id" }); return; }
+    const id = parseRouteId(req.params["id"]);
+    if (!id) {
+      res.status(400).json({ error: "Invalid id: must be a positive integer." });
+      return;
+    }
 
     const extractionId = req.params["extractionId"];
 
@@ -348,7 +403,10 @@ router.put(
       .select()
       .from(servicesTable)
       .where(eq(servicesTable.id, id));
-    if (!service) { res.status(404).json({ error: "Service not found." }); return; }
+    if (!service) {
+      res.status(404).json({ error: "Service not found." });
+      return;
+    }
 
     const [extraction] = await db
       .select()
@@ -362,12 +420,18 @@ router.put(
     // deleted) the extraction is marked consumed. Re-confirming it would let an
     // old AI-derived value silently overwrite newer user-entered deal data.
     if (extraction.deletedAt) {
-      res.status(409).json({ error: "This extraction draft has already been applied and cannot be reused." });
+      res.status(409).json({
+        error:
+          "This extraction draft has already been applied and cannot be reused.",
+      });
       return;
     }
 
     const body = req.body as {
-      confirmedFields?: Record<string, { value: unknown; source: ProvenanceSource }>;
+      confirmedFields?: Record<
+        string,
+        { value: unknown; source: ProvenanceSource }
+      >;
       deletedFields?: string[];
     };
 
@@ -377,14 +441,18 @@ router.put(
     // Validate: all confirmed fields must have a valid source
     const parsedConfirmed = DealFieldsSchema.safeParse(confirmedFields);
     if (!parsedConfirmed.success) {
-      res.status(400).json({ error: "Invalid confirmedFields: " + parsedConfirmed.error.message });
+      res.status(400).json({
+        error: "Invalid confirmedFields: " + parsedConfirmed.error.message,
+      });
       return;
     }
 
     // Validate: only keys from the extraction draft may be confirmed or deleted.
     // This prevents overwriting or deleting arbitrary existing current-deal fields.
     const allowedKeys = new Set<string>(extraction.draftFieldKeys as string[]);
-    const illegalConfirm = Object.keys(parsedConfirmed.data).filter((k) => !allowedKeys.has(k));
+    const illegalConfirm = Object.keys(parsedConfirmed.data).filter(
+      (k) => !allowedKeys.has(k),
+    );
     if (illegalConfirm.length > 0) {
       res.status(400).json({
         error: `confirmedFields contains keys not in this extraction draft: ${illegalConfirm.join(", ")}`,
@@ -404,9 +472,7 @@ router.put(
     const currentFields: DealFields = (existing?.fields as DealFields) ?? {};
 
     // Apply confirmed fields — the user has explicitly reviewed and approved each
-    // value, so we write it with source: extracted_confirmed (replaces any
-    // existing value for that key, including user-entered values, because this
-    // is an intentional user action).
+    // value, so we write it with source: extracted_confirmed.
     const updatedFields: DealFields = { ...currentFields };
     let confirmedCount = 0;
     for (const [key, pf] of Object.entries(parsedConfirmed.data)) {
@@ -418,11 +484,7 @@ router.put(
     }
 
     // Deleted draft fields are simply discarded — we do NOT remove pre-existing
-    // current-deal values for those keys. The draft was never written to the
-    // deal, so "delete" means "don't add this extracted value" rather than
-    // "remove whatever is currently stored."
-    // (No further action needed: updatedFields already omits any draft value
-    // for keys not in confirmedFields, and existing deal fields are untouched.)
+    // current-deal values for those keys.
 
     let row;
     if (existing) {
@@ -446,9 +508,7 @@ router.put(
         .returning();
     }
 
-    // Mark extraction consumed — prevents replay.  All draft fields have now
-    // been either confirmed or discarded; a second PUT to this endpoint would
-    // let stale AI-derived values silently overwrite newer user data.
+    // Mark extraction consumed — prevents replay.
     await db
       .update(documentExtractionsTable)
       .set({ confirmedCount, deletedAt: new Date() })

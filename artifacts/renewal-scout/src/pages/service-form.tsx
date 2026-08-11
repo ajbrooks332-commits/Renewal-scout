@@ -23,22 +23,57 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { useToast } from "@/hooks/use-toast";
 import { ChevronLeft, Info, Loader2, Save } from "lucide-react";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
+import { SERVICE_TYPES } from "@workspace/api-zod";
 
-const SERVICE_TYPES = [
-  "Broadband", "Electricity", "Gas and electricity", "Car insurance", 
-  "Home insurance", "Life insurance", "Credit card", "Loan", "Mobile phone", "Other"
-];
+// Single source of truth for service type values — imported from api-zod.
+// This ensures client-side and server-side enum lists are always identical.
+const SERVICE_TYPE_LIST: readonly string[] = SERVICE_TYPES;
 
+// Reusable calendar-date refine — validates YYYY-MM-DD and rejects impossible
+// dates (e.g. 2026-02-30) without needing z.preprocess (which breaks TypeScript
+// inference in z.object schemas).
+function isValidCalendarDate(v: string | null | undefined): boolean {
+  if (!v) return true; // null/empty is allowed at this layer
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return false;
+  const [year, month, day] = v.split("-").map(Number);
+  const d = new Date(year!, month! - 1, day!);
+  return (
+    d.getFullYear() === year &&
+    d.getMonth() === month! - 1 &&
+    d.getDate() === day
+  );
+}
+
+// Form schema: mirrors StrictCreateServiceBody constraints but keeps types simple
+// so react-hook-form can infer and manage them without TypeScript struggling.
+// HTML <input type="number"> returns empty string when blank, so we use
+// z.coerce.number() which handles the string→number conversion cleanly.
 const formSchema = z.object({
-  serviceType: z.string().min(1, "Service type is required"),
+  // Validate against the shared SERVICE_TYPES list (same constraint as the server).
+  // Using .refine() rather than z.enum() keeps the TypeScript output type as
+  // `string`, which avoids a conflict with react-hook-form's FieldValues generic.
+  serviceType: z
+    .string()
+    .min(1, "Please select a service type")
+    .refine(
+      (v) => (SERVICE_TYPES as readonly string[]).includes(v),
+      "Please select a valid service type",
+    ),
   provider: z.string().min(1, "Provider is required").max(160),
   productName: z.string().nullable().optional(),
-  monthlyCostGbp: z.coerce.number().nullable().optional(),
-  annualCostGbp: z.coerce.number().nullable().optional(),
-  renewalDate: z.string().nullable().optional(),
-  contractEndDate: z.string().nullable().optional(),
-  noticeDays: z.coerce.number().min(0).max(365).default(30),
-  researchWindowDays: z.coerce.number().min(1).max(365).default(60),
+  // Costs: react-hook-form stores null (not 0) for blank inputs — see onChange
+  // handler on the cost <Input> elements below. Without coerce, null passes
+  // through and the schema cleanly distinguishes blank (null) from £0 (0).
+  monthlyCostGbp: z.number().min(0, "Must be non-negative").nullable().optional(),
+  annualCostGbp: z.number().min(0, "Must be non-negative").nullable().optional(),
+  // Dates: validate as real calendar dates (server also validates, but good UX)
+  renewalDate: z.string().nullable().optional()
+    .refine(isValidCalendarDate, "Must be a valid date (YYYY-MM-DD)"),
+  contractEndDate: z.string().nullable().optional()
+    .refine(isValidCalendarDate, "Must be a valid date (YYYY-MM-DD)"),
+  // Notice/window days: coerce from string, validate as non-negative integers
+  noticeDays: z.coerce.number().int().min(0).max(365).default(30),
+  researchWindowDays: z.coerce.number().int().min(1).max(365).default(60),
   location: z.string().nullable().optional(),
   currentTerms: z.string().nullable().optional(),
   preferences: z.string().nullable().optional(),
@@ -187,7 +222,7 @@ export default function ServiceFormPage() {
                         <SelectTrigger><SelectValue placeholder="Select type..." /></SelectTrigger>
                       </FormControl>
                       <SelectContent>
-                        {SERVICE_TYPES.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
+                        {SERVICE_TYPE_LIST.map(t => <SelectItem key={t} value={t}>{t}</SelectItem>)}
                       </SelectContent>
                     </Select>
                     <FormMessage />
@@ -226,7 +261,20 @@ export default function ServiceFormPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Monthly Cost (£)</FormLabel>
-                    <FormControl><Input type="number" step="0.01" {...field} value={field.value ?? ""} /></FormControl>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        {...field}
+                        value={field.value ?? ""}
+                        onChange={(e) => {
+                          // Store null (not 0) when the field is cleared so blank
+                          // and explicit £0 are distinguishable downstream.
+                          const v = e.target.value;
+                          field.onChange(v === "" ? null : parseFloat(v));
+                        }}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
@@ -238,7 +286,18 @@ export default function ServiceFormPage() {
                 render={({ field }) => (
                   <FormItem>
                     <FormLabel>Annual Cost (£) <span className="text-muted-foreground font-normal ml-1">(Overrides monthly x 12)</span></FormLabel>
-                    <FormControl><Input type="number" step="0.01" {...field} value={field.value ?? ""} /></FormControl>
+                    <FormControl>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        {...field}
+                        value={field.value ?? ""}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          field.onChange(v === "" ? null : parseFloat(v));
+                        }}
+                      />
+                    </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}

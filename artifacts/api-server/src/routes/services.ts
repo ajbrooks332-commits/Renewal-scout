@@ -1,10 +1,11 @@
 import { Router, type IRouter } from "express";
 import { eq, asc } from "drizzle-orm";
+import { z } from "zod";
 import { db, servicesTable } from "@workspace/db";
 import {
-  CreateServiceBody,
-  UpdateServiceBody,
-  GetServiceParams,
+  StrictCreateServiceBody,
+  StrictUpdateServiceBody,
+  parseRouteId,
 } from "@workspace/api-zod";
 import { requireAuth } from "../middlewares/require-auth";
 import {
@@ -14,54 +15,45 @@ import {
   serviceToApi,
 } from "../lib/research-service";
 import { daysUntilTarget } from "../lib/renewal-logic";
-import { validateServiceInput, trimServiceInput } from "../lib/validation";
 import { checkCompleteness } from "../lib/completeness";
 
 const router: IRouter = Router();
 
 router.use(requireAuth);
 
-function parseId(raw: string | string[] | undefined): number | null {
-  const s = Array.isArray(raw) ? raw[0] : raw;
-  const n = parseInt(s ?? "", 10);
-  return isNaN(n) ? null : n;
+/**
+ * Convert a GBP decimal value to integer pence for storage.
+ * Returns null if the input is null/undefined.
+ * Input must already be validated as a finite non-negative number.
+ */
+function gbpToPence(v: number | null | undefined): number | null {
+  if (v === null || v === undefined) return null;
+  return Math.round(v * 100);
 }
 
 /**
- * Convert a GBP decimal value to integer pence for storage.
- * Returns null if the input is null/undefined/NaN.
+ * Convert validated (Zod-parsed) service input into DB column values.
+ * Trims whitespace from text fields.
  */
-function gbpToPence(v: unknown): number | null {
-  if (v === null || v === undefined) return null;
-  const n = typeof v === "number" ? v : parseFloat(String(v));
-  return isNaN(n) ? null : Math.round(n * 100);
-}
-
-function buildServiceValues(data: Record<string, unknown>) {
-  // Trim short text fields before storing
-  const trimmed = trimServiceInput(data);
+function buildServiceValues(
+  data: z.infer<typeof StrictCreateServiceBody>,
+) {
   return {
-    serviceType: (trimmed["serviceType"] as string | undefined) ?? "Other",
-    provider: (trimmed["provider"] as string) ?? "",
-    productName:
-      (trimmed["productName"] as string | null | undefined) ?? null,
+    serviceType: data.serviceType,
+    provider: data.provider.trim(),
+    productName: data.productName?.trim() ?? null,
     // API accepts GBP decimal; stored as integer pence
-    monthlyCostPence: gbpToPence(trimmed["monthlyCostGbp"]),
-    annualCostPence: gbpToPence(trimmed["annualCostGbp"]),
-    renewalDate:
-      (trimmed["renewalDate"] as string | null | undefined) ?? null,
-    contractEndDate:
-      (trimmed["contractEndDate"] as string | null | undefined) ?? null,
-    noticeDays: (trimmed["noticeDays"] as number | undefined) ?? 30,
-    researchWindowDays:
-      (trimmed["researchWindowDays"] as number | undefined) ?? 60,
-    location: (trimmed["location"] as string | null | undefined) ?? null,
-    currentTerms:
-      (trimmed["currentTerms"] as string | null | undefined) ?? null,
-    preferences:
-      (trimmed["preferences"] as string | null | undefined) ?? null,
-    quoteFacts: (trimmed["quoteFacts"] as string | null | undefined) ?? null,
-    autoResearch: (trimmed["autoResearch"] as boolean | undefined) ?? true,
+    monthlyCostPence: gbpToPence(data.monthlyCostGbp),
+    annualCostPence: gbpToPence(data.annualCostGbp),
+    renewalDate: data.renewalDate ?? null,
+    contractEndDate: data.contractEndDate ?? null,
+    noticeDays: data.noticeDays ?? 30,
+    researchWindowDays: data.researchWindowDays ?? 60,
+    location: data.location?.trim() ?? null,
+    currentTerms: data.currentTerms ?? null,
+    preferences: data.preferences ?? null,
+    quoteFacts: data.quoteFacts ?? null,
+    autoResearch: data.autoResearch ?? true,
   };
 }
 
@@ -87,39 +79,25 @@ router.get("/services", async (_req, res): Promise<void> => {
 
 // POST /services
 router.post("/services", async (req, res): Promise<void> => {
-  const parsed = CreateServiceBody.safeParse(req.body);
+  const parsed = StrictCreateServiceBody.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
+    res.status(400).json({
+      error: "Validation failed.",
+      details: parsed.error.format(),
+    });
     return;
   }
 
-  const rawData = parsed.data as Record<string, unknown>;
-  const trimmed = trimServiceInput(rawData);
-
-  if (!trimmed["provider"] || !(trimmed["provider"] as string).trim()) {
-    res.status(400).json({ error: "Provider is required." });
-    return;
-  }
-
-  const fieldErrors = validateServiceInput(trimmed);
-  if (fieldErrors.length > 0) {
-    res.status(400).json({ error: "Validation failed.", fields: fieldErrors });
-    return;
-  }
-
-  const values = buildServiceValues(rawData);
-  const [service] = await db
-    .insert(servicesTable)
-    .values(values)
-    .returning();
+  const values = buildServiceValues(parsed.data);
+  const [service] = await db.insert(servicesTable).values(values).returning();
   res.status(201).json(serviceToApi(service));
 });
 
 // GET /services/:id
 router.get("/services/:id", async (req, res): Promise<void> => {
-  const id = parseId(req.params["id"]);
+  const id = parseRouteId(req.params["id"]);
   if (!id) {
-    res.status(400).json({ error: "Invalid id" });
+    res.status(400).json({ error: "Invalid id: must be a positive integer." });
     return;
   }
 
@@ -171,33 +149,22 @@ router.get("/services/:id", async (req, res): Promise<void> => {
 
 // PUT /services/:id
 router.put("/services/:id", async (req, res): Promise<void> => {
-  const id = parseId(req.params["id"]);
+  const id = parseRouteId(req.params["id"]);
   if (!id) {
-    res.status(400).json({ error: "Invalid id" });
+    res.status(400).json({ error: "Invalid id: must be a positive integer." });
     return;
   }
 
-  const parsed = UpdateServiceBody.safeParse(req.body);
+  const parsed = StrictUpdateServiceBody.safeParse(req.body);
   if (!parsed.success) {
-    res.status(400).json({ error: parsed.error.message });
+    res.status(400).json({
+      error: "Validation failed.",
+      details: parsed.error.format(),
+    });
     return;
   }
 
-  const rawData = parsed.data as Record<string, unknown>;
-  const trimmed = trimServiceInput(rawData);
-
-  if (!trimmed["provider"] || !(trimmed["provider"] as string).trim()) {
-    res.status(400).json({ error: "Provider is required." });
-    return;
-  }
-
-  const fieldErrors = validateServiceInput(trimmed);
-  if (fieldErrors.length > 0) {
-    res.status(400).json({ error: "Validation failed.", fields: fieldErrors });
-    return;
-  }
-
-  const values = buildServiceValues(rawData);
+  const values = buildServiceValues(parsed.data);
   const [service] = await db
     .update(servicesTable)
     .set({ ...values, updatedAt: new Date() })
@@ -212,9 +179,9 @@ router.put("/services/:id", async (req, res): Promise<void> => {
 
 // POST /services/:id/archive
 router.post("/services/:id/archive", async (req, res): Promise<void> => {
-  const id = parseId(req.params["id"]);
+  const id = parseRouteId(req.params["id"]);
   if (!id) {
-    res.status(400).json({ error: "Invalid id" });
+    res.status(400).json({ error: "Invalid id: must be a positive integer." });
     return;
   }
 
@@ -232,9 +199,9 @@ router.post("/services/:id/archive", async (req, res): Promise<void> => {
 
 // POST /services/:id/research
 router.post("/services/:id/research", async (req, res): Promise<void> => {
-  const id = parseId(req.params["id"]);
+  const id = parseRouteId(req.params["id"]);
   if (!id) {
-    res.status(400).json({ error: "Invalid id" });
+    res.status(400).json({ error: "Invalid id: must be a positive integer." });
     return;
   }
 
@@ -244,7 +211,8 @@ router.post("/services/:id/research", async (req, res): Promise<void> => {
     const completeness = await checkCompleteness(id);
     if (completeness.blocking) {
       res.status(422).json({
-        error: "Missing required fields. Provide the missing information or pass forceWithMissing: true to proceed anyway.",
+        error:
+          "Missing required fields. Provide the missing information or pass forceWithMissing: true to proceed anyway.",
         missing: completeness.required,
         completenessReport: completeness,
       });

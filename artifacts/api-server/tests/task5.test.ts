@@ -502,8 +502,9 @@ describe("PUT /api/household-profile — partial PATCH semantics", () => {
       .send({ postcode: "SW1A1AA" }); // only send one field
 
     expect(res.status).toBe(200);
-    // The conflict-update set must contain only the supplied field + updatedAt
-    expect(capturedSet).toHaveProperty("postcode", "SW1A1AA");
+    // The conflict-update set must contain only the supplied field + updatedAt.
+    // Postcode is normalised: "SW1A1AA" → "SW1A 1AA" (space before inward code)
+    expect(capturedSet).toHaveProperty("postcode", "SW1A 1AA");
     // No other profile columns were included in the conflict update
     const setKeys = Object.keys(capturedSet);
     expect(setKeys.filter((k) => k !== "postcode" && k !== "updatedAt").length).toBe(0);
@@ -564,5 +565,101 @@ describe("completeness check does not fill in missing profile fields", () => {
     expect(report.required).toContain("Car make");
     expect(report.required).toContain("Car model");
     expect(report.required).toContain("Car year");
+  });
+});
+
+// ─── Route-level strict validation 400 responses ──────────────────────────────
+// These exercise the Zod schema guards at the HTTP boundary, not just the schema
+// unit level. They ensure the routes return 400 (not 500) for bad input.
+
+describe("POST /api/services — strict validation 400s", () => {
+  it("returns 400 for an unrecognised service type", async () => {
+    const res = await request(app)
+      .post("/api/services")
+      .set("Cookie", authCookie)
+      .send({ serviceType: "Plumbing", provider: "APlumber", noticeDays: 30, researchWindowDays: 60 });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 when an unknown key is included in the body", async () => {
+    const res = await request(app)
+      .post("/api/services")
+      .set("Cookie", authCookie)
+      .send({ serviceType: "Broadband", provider: "BT", unknownField: "value" });
+    expect(res.status).toBe(400);
+    // Route returns { error, details } from parsed.error.format()
+    expect(res.body).toHaveProperty("details");
+  });
+
+  it("returns 400 for a whitespace-only provider", async () => {
+    const res = await request(app)
+      .post("/api/services")
+      .set("Cookie", authCookie)
+      .send({ serviceType: "Broadband", provider: "   ", noticeDays: 30, researchWindowDays: 60 });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for a negative monthly cost", async () => {
+    const res = await request(app)
+      .post("/api/services")
+      .set("Cookie", authCookie)
+      .send({ serviceType: "Broadband", provider: "BT", monthlyCostGbp: -1 });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for an impossible renewal date", async () => {
+    const res = await request(app)
+      .post("/api/services")
+      .set("Cookie", authCookie)
+      .send({ serviceType: "Broadband", provider: "BT", renewalDate: "2026-02-30" });
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("PUT /api/services/:id — strict validation 400s", () => {
+  it("returns 400 for an unknown key (Zod .strict() fires before any DB call)", async () => {
+    // No DB mock needed — validation runs before the UPDATE query
+    const res = await request(app)
+      .put("/api/services/1")
+      .set("Cookie", authCookie)
+      .send({ serviceType: "Broadband", provider: "Sky", hackerField: "value" });
+    expect(res.status).toBe(400);
+    expect(res.body).toHaveProperty("details");
+  });
+
+  it("returns 400 for a non-digit route ID (parseRouteId rejects '1abc')", async () => {
+    // parseRouteId("1abc") → null → 400, before any DB query
+    const res = await request(app)
+      .put("/api/services/1abc")
+      .set("Cookie", authCookie)
+      .send({ serviceType: "Broadband", provider: "Sky" });
+    expect(res.status).toBe(400);
+  });
+});
+
+// Household profile uses PUT (upsert semantics) at this route
+describe("PUT /api/household-profile — strict validation 400s", () => {
+  it("returns 400 when string 'false' is sent for a boolean field", async () => {
+    const res = await request(app)
+      .put("/api/household-profile")
+      .set("Cookie", authCookie)
+      .send({ hasEv: "false" });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for an invalid postcode", async () => {
+    const res = await request(app)
+      .put("/api/household-profile")
+      .set("Cookie", authCookie)
+      .send({ postcode: "12345" });
+    expect(res.status).toBe(400);
+  });
+
+  it("returns 400 for an unknown key (.strict() on schema)", async () => {
+    const res = await request(app)
+      .put("/api/household-profile")
+      .set("Cookie", authCookie)
+      .send({ postcode: "SW1A 1AA", unknownField: "value" });
+    expect(res.status).toBe(400);
   });
 });
