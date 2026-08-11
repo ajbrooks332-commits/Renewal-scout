@@ -5,27 +5,19 @@ import { defineConfig } from 'vite';
 
 import runtimeErrorOverlay from '@replit/vite-plugin-runtime-error-modal';
 
+// PORT and BASE_PATH are only needed in serve/preview mode.
+// During `vite build` the server config is unused, so we fall back to safe
+// defaults rather than throwing — this lets `pnpm run build` work in CI
+// environments that don't set PORT.
 const rawPort = process.env.PORT;
-
-if (!rawPort) {
-  throw new Error(
-    'PORT environment variable is required but was not provided.',
-  );
+if (rawPort !== undefined) {
+  const p = Number(rawPort);
+  if (Number.isNaN(p) || p <= 0) {
+    throw new Error(`Invalid PORT value: "${rawPort}"`);
+  }
 }
-
-const port = Number(rawPort);
-
-if (Number.isNaN(port) || port <= 0) {
-  throw new Error(`Invalid PORT value: "${rawPort}"`);
-}
-
-const basePath = process.env.BASE_PATH;
-
-if (!basePath) {
-  throw new Error(
-    'BASE_PATH environment variable is required but was not provided.',
-  );
-}
+const port = rawPort ? Number(rawPort) : 8080;
+const basePath = process.env.BASE_PATH ?? '/';
 
 export default defineConfig({
   base: basePath,

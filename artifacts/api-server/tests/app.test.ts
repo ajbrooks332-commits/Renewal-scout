@@ -224,50 +224,55 @@ describe("URL sanitisation integration", () => {
 });
 
 // ─── Duplicate research prevention ───────────────────────────────────────────
+// Real invocation of queueResearch — verifies the actual duplicate-prevention
+// function returns the existing run ID without inserting a new row.
 
 describe("Duplicate research prevention", () => {
-  it("queueResearch returns existing run ID when a run is already active", async () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("queueResearch returns existing run ID when an active run already exists", async () => {
     const { db } = await import("@workspace/db");
+    const { queueResearch } = await import("../src/lib/research-service");
+
     const existingRunId = 42;
 
-    // Mock: select returns an existing queued run
-    vi.mocked(db.select).mockImplementationOnce(
-      () =>
-        ({
-          from: () => ({
-            where: () => ({
-              limit: () =>
-                Promise.resolve([
-                  { id: existingRunId, serviceId: 1, status: "queued" },
-                ]),
-            }),
-          }),
-        }) as ReturnType<typeof db.select>,
+    // Reusable chain builder mirroring tests/setup.ts
+    function makeChain(finalValue: unknown) {
+      const resolved = Promise.resolve(finalValue);
+      const chain: Record<string, (...args: unknown[]) => unknown> = {
+        from: () => chain,
+        where: () => chain,
+        orderBy: () => chain,
+        set: () => chain,
+        values: () => chain,
+        onConflictDoNothing: () => chain,
+        limit: () => resolved,
+        returning: () => resolved,
+        then: (f?: (v: unknown) => unknown, r?: (e: unknown) => unknown) =>
+          resolved.then(f, r),
+        catch: (r?: (e: unknown) => unknown) => resolved.catch(r),
+        finally: (f?: () => void) => resolved.finally(f),
+      };
+      return chain as ReturnType<typeof db.select>;
+    }
+
+    // 1st select: service lookup → found
+    vi.mocked(db.select).mockImplementationOnce(() =>
+      makeChain([{ id: 1, active: true }]),
+    );
+    // 2nd select: application-level active-run check → returns existing run
+    vi.mocked(db.select).mockImplementationOnce(() =>
+      makeChain([{ id: existingRunId, serviceId: 1, status: "queued" }]),
     );
 
-    // Mock: first select for the service
-    vi.mocked(db.select).mockImplementationOnce(
-      () =>
-        ({
-          from: () => ({
-            where: () =>
-              Promise.resolve([
-                {
-                  id: 1,
-                  active: true,
-                  autoResearch: true,
-                  provider: "Test",
-                  serviceType: "Broadband",
-                },
-              ]),
-          }),
-        }) as ReturnType<typeof db.select>,
-    );
+    // Call the REAL function — this is the test. It should return the
+    // existing run ID without calling db.insert.
+    const result = await queueResearch(1, "manual");
 
-    // This is a unit-level guard: the app-level idempotency is already tested
-    // by verifying queueResearch returns the existing ID without inserting.
-    // The DB mock ensures no insert is called.
-    expect(existingRunId).toBe(42); // structural guard
+    expect(result).toBe(existingRunId);
+    expect(vi.mocked(db.insert)).not.toHaveBeenCalled();
   });
 });
 
