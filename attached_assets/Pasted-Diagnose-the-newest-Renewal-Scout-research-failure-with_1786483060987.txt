@@ -1,0 +1,63 @@
+Diagnose the newest Renewal Scout research failure without making another OpenAI request.
+
+IMPORTANT:
+- Do not trigger research.
+- Do not make any authenticated OpenAI API request.
+- Do not modify code.
+- Do not expose API keys, prompts, household details or raw error messages.
+- Do not commit or open a PR.
+
+1. Identify the newest research run after run 64.
+
+2. Report only:
+   - run ID
+   - status
+   - start time
+   - completion time
+   - duration
+   - stored safe error
+
+3. Search the API Server logs for that exact run ID and timestamp.
+
+Report the safe log metadata only:
+   - errorType
+   - httpStatus, if present
+   - requestId, if present
+   - timestamp
+
+Do not print err.message or any request content.
+
+4. Determine whether the failure occurred:
+
+   A. During the OpenAI request
+   B. After OpenAI returned, while extracting output_text
+   C. While parsing the returned JSON
+   D. During DealReportSchema validation
+   E. During citation reconciliation or savings calculation
+   F. While saving the completed report to PostgreSQL
+
+5. Inspect research-service.ts and list the possible safe failure points between:
+   openai.responses.create(...)
+and:
+   logger.info(..., "Research completed")
+
+6. Check for PostgreSQL/database errors at the same timestamp, using error class and error code only. Do not display SQL values or household information.
+
+7. Confirm again that the running compiled server contains:
+   - timeout: 180000
+   - maxRetries: 0
+   - the new timeout message
+
+8. Interpret the duration:
+   - approximately 180 seconds plus small overhead suggests a connection error whose class was not recognised correctly
+   - substantially less than 180 seconds suggests OpenAI returned but the response failed parsing, validation, processing or database storage
+
+9. Give a concise diagnosis report. If the existing logs cannot distinguish parsing from schema validation, propose a minimal safe diagnostic patch that records only a fixed failure-stage code such as:
+   OPENAI_REQUEST
+   EMPTY_OUTPUT
+   JSON_PARSE
+   SCHEMA_VALIDATION
+   REPORT_PROCESSING
+   DATABASE_SAVE
+
+Do not apply that patch yet and do not make another API request.
