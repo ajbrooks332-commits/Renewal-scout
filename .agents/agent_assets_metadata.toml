@@ -19,8 +19,8 @@ description = "All source files from api-server, renewal-scout frontend, and lib
 id = "8QPz8bzhe6mlnB6qFRx06"
 uri = "file://renewal-scout-export.txt"
 type = "text"
-title = "renewal-scout-export.txt — Full codebase as plain text"
-description = "33,642 lines of source code in a single .txt file. ChatGPT can read this directly — upload it using the + (attach) button in ChatGPT."
+title = "Renewal Scout — Full Source Code"
+description = "Complete codebase as a plain text file. Upload this to ChatGPT using the + button."
 
 [[outputs]]
 id = "Gf7hsjbhVkYlDoAW0Lhl-"
