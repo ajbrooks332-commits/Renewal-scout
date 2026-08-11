@@ -1,0 +1,77 @@
+Implement safe, detailed research failure-stage diagnostics.
+
+Create a new branch:
+agent/add-safe-research-stage-diagnostics
+
+Do not make any live OpenAI API request.
+Do not trigger research.
+Preserve untracked attached_assets files.
+Do not log or store API keys, prompts, household information, AI output, URLs or raw error messages.
+
+Modify research-service.ts so executeResearch tracks these fixed stages:
+
+OPENAI_REQUEST
+EMPTY_OUTPUT
+JSON_PARSE
+SCHEMA_VALIDATION
+SANITISE_REPORT
+CITATION_EXTRACTION
+CITATION_RECONCILIATION
+SAVINGS_CALCULATION
+WARNING_INJECTION
+NEXT_RESEARCH_DATE
+DATABASE_SAVE
+
+Set failureStage immediately before each corresponding operation.
+
+Safe diagnostic requirements:
+
+1. For the OpenAI response, record only:
+   - response status
+   - incomplete reason, if present
+   - number of output items
+   - output item types
+
+   Never record output_text or any response content.
+
+2. If DealReportSchema validation fails, log only:
+   - Zod issue code
+   - field path, such as options.0.annual_cost_gbp
+   - total issue count
+
+   Never log rejected values or Zod issue messages.
+
+3. For database failures, record only the error constructor and PostgreSQL SQLSTATE code when available. Never log SQL, parameters or messages.
+
+4. Include failureStage in the existing Research failed log.
+
+5. Store a safe user-facing error containing the stage reference, for example:
+   "Research could not be completed. Reference: SCHEMA_VALIDATION."
+
+6. Preserve the existing specific messages for:
+   - OpenAI HTTP errors
+   - API connection timeouts
+
+7. Preserve:
+   - timeout: 180_000
+   - maxRetries: 0
+   - store: false
+   - OPENAI_MODEL handling
+
+8. Add tests proving:
+   - every fixed stage exists
+   - stage codes contain no user data
+   - Zod diagnostics contain only issue code and field path
+   - raw errors, messages, AI output and prompts are never logged or stored
+   - existing timeout and OpenAI error classification still works
+   - stored error strings remain below the database limit
+
+Run:
+pnpm install --frozen-lockfile
+pnpm run typecheck
+pnpm --filter @workspace/api-server test
+pnpm run build
+
+Do not make a live OpenAI request.
+
+Commit the changes and open a draft PR targeting main. Do not merge it. Report changed files, test results and the PR link.
