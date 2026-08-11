@@ -36,6 +36,13 @@
       "when": 1786554000000,
       "tag": "0004_research_runs_generic_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786640400000,
+      "tag": "0005_extraction_status_draft_fields",
+      "breakpoints": true
     }
   ]
 }

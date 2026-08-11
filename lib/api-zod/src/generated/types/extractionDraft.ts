@@ -6,13 +6,21 @@
  * OpenAPI spec version: 0.1.0
  */
 import type { ExtractionDraftFields } from './extractionDraftFields';
+import type { ExtractionDraftStatus } from './extractionDraftStatus';
 
 export interface ExtractionDraft {
   extractionId: string;
   serviceId: number;
+  /** Lifecycle state of this extraction draft. Only 'draft' status drafts are actionable by the user. */
+  status: ExtractionDraftStatus;
   /** Extracted deal fields — all have source=extracted_unconfirmed until the user confirms them. */
   fields: ExtractionDraftFields;
   extractedAt: string;
+  /**
+     * ISO timestamp after which this draft expires
+     * @nullable
+     */
+  expiresAt?: string | null;
   /** Human-readable notice that the document was sent to the OpenAI API */
   aiDisclosure: string;
 }

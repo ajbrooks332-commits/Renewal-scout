@@ -1,25 +1,35 @@
 /**
  * Current Deal Tab — shown inside the service detail page.
  * Displays deal fields with provenance badges, upload button, and extraction confirmation.
+ *
+ * Key privacy & provenance rules enforced here:
+ *  - Upload requires explicit consent checkbox (opt-in, not pre-ticked)
+ *  - Confirmation sends only raw values — server assigns source: "extracted_confirmed"
+ *  - Manual edits use the values+clear API — server assigns source: "user"
+ *  - Discard calls the real server endpoint (not just client-side state clear)
+ *  - Pending drafts are restored from the server on page load (survives refresh)
  */
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import {
   useGetCurrentDeal,
   useUpdateCurrentDeal,
-  useExtractDocument,
   useConfirmExtractionDraft,
+  useDiscardExtractionDraft,
+  useGetPendingExtractionDraft,
   getGetCurrentDealQueryKey,
+  getGetPendingExtractionDraftQueryKey,
 } from "@workspace/api-client-react";
-import type { ProvenanceField, CurrentDealFields, ExtractionDraft } from "@workspace/api-client-react";
+import type { ExtractionDraft } from "@workspace/api-client-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import {
-  Upload, Save, Loader2, Check, X, FileText, AlertTriangle, Pencil, Info
+  Upload, Save, Loader2, Check, X, FileText, AlertTriangle, Pencil, Info, ShieldAlert
 } from "lucide-react";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -36,12 +46,25 @@ interface FieldEntry {
 const FIELD_DEFS: FieldEntry[] = [
   { key: "provider", label: "Provider", type: "text" },
   { key: "tariffName", label: "Tariff / product name", type: "text" },
+  { key: "productName", label: "Product name", type: "text" },
   { key: "monthlyCostGbp", label: "Monthly cost (£)", type: "number", placeholder: "e.g. 45.99" },
   { key: "annualCostGbp", label: "Annual cost (£)", type: "number" },
+  { key: "annualPremiumGbp", label: "Annual premium (£)", type: "number" },
   { key: "renewalDate", label: "Renewal date", type: "date" },
   { key: "contractEndDate", label: "Contract end date", type: "date" },
   { key: "exitFeeGbp", label: "Exit / cancellation fee (£)", type: "number" },
+  { key: "setupFeeGbp", label: "Setup fee (£)", type: "number" },
   { key: "noticeDays", label: "Notice period (days)", type: "number" },
+  { key: "unitRatePencePkwh", label: "Unit rate (p/kWh)", type: "number" },
+  { key: "standingChargePencePday", label: "Standing charge (p/day)", type: "number" },
+  { key: "gasUnitRatePencePkwh", label: "Gas unit rate (p/kWh)", type: "number" },
+  { key: "gasStandingChargePencePday", label: "Gas standing charge (p/day)", type: "number" },
+  { key: "downloadSpeedMbps", label: "Download speed (Mbps)", type: "number" },
+  { key: "uploadSpeedMbps", label: "Upload speed (Mbps)", type: "number" },
+  { key: "coverType", label: "Cover type", type: "text" },
+  { key: "excessGbp", label: "Excess (£)", type: "number" },
+  { key: "aprPct", label: "APR (%)", type: "number" },
+  { key: "balanceGbp", label: "Balance (£)", type: "number" },
   { key: "inclusions", label: "What's included", type: "text" },
   { key: "exclusions", label: "Key exclusions", type: "text" },
   { key: "notes", label: "Other notes", type: "text" },
@@ -90,21 +113,32 @@ function ManualDealEditor({
   const save = useUpdateCurrentDeal();
 
   function handleSave() {
-    const merged: DealFieldsMap = { ...fields };
+    // New API: send values (field→raw value) + clear (keys to remove).
+    // Server always assigns source: "user" — we never set provenance client-side.
+    const values: Record<string, unknown> = {};
+    const clear: string[] = [];
+
     for (const { key } of FIELD_DEFS) {
       const val = local[key];
-      if (val !== null && val !== undefined && String(val).trim() !== "") {
-        merged[key] = { value: val, source: "user" };
-      } else if (merged[key]?.source === "user") {
-        delete merged[key];
+      const hasValue = val !== null && val !== undefined && String(val).trim() !== "";
+      if (hasValue) {
+        values[key] = val;
+      } else if (fields[key]?.source === "user") {
+        // Field was user-entered but now cleared → request removal
+        clear.push(key);
       }
     }
+
     save.mutate(
-      { id: serviceId, data: { fields: merged as unknown as CurrentDealFields } },
+      { id: serviceId, data: { values, clear } },
       {
         onSuccess: () => { toast({ title: "Deal saved" }); onSaved(); },
         onError: (err) => {
-          toast({ title: "Failed to save", description: (err as { data?: { error?: string } }).data?.error, variant: "destructive" });
+          toast({
+            title: "Failed to save",
+            description: (err as { data?: { error?: string } }).data?.error,
+            variant: "destructive",
+          });
         },
       },
     );
@@ -151,6 +185,7 @@ function ExtractionConfirmScreen({
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const confirm = useConfirmExtractionDraft();
+  const discard = useDiscardExtractionDraft();
 
   // Local edits to extracted values
   const [localValues, setLocalValues] = useState<Record<string, unknown>>(() => {
@@ -162,11 +197,20 @@ function ExtractionConfirmScreen({
   });
   const [deleted, setDeleted] = useState<Set<string>>(new Set());
 
+  // Clears the pending-draft query cache synchronously so the parent useEffect
+  // that restores pending drafts does NOT re-show the review screen immediately
+  // after a successful confirm or discard.
+  function clearPendingDraftCache() {
+    queryClient.setQueryData(getGetPendingExtractionDraftQueryKey(serviceId), null);
+    void queryClient.invalidateQueries({ queryKey: getGetPendingExtractionDraftQueryKey(serviceId) });
+  }
+
   function handleConfirm() {
-    const confirmedFields: DealFieldsMap = {};
+    // Do NOT send source — server assigns source: "extracted_confirmed" server-side.
+    const confirmedFields: Record<string, { value: unknown }> = {};
     for (const key of Object.keys(draft.fields as object)) {
       if (!deleted.has(key)) {
-        confirmedFields[key] = { value: localValues[key] ?? null, source: "extracted_confirmed" };
+        confirmedFields[key] = { value: localValues[key] ?? null };
       }
     }
     confirm.mutate(
@@ -174,18 +218,63 @@ function ExtractionConfirmScreen({
         id: serviceId,
         extractionId: draft.extractionId,
         data: {
-          confirmedFields: confirmedFields as unknown as Parameters<typeof confirm.mutate>[0]["data"]["confirmedFields"],
+          confirmedFields: confirmedFields as Parameters<typeof confirm.mutate>[0]["data"]["confirmedFields"],
           deletedFields: Array.from(deleted),
         },
       },
       {
         onSuccess: () => {
           toast({ title: "Extraction confirmed", description: "Confirmed fields saved to current deal." });
+          // Wipe pending-draft cache first so the useEffect doesn't re-render the
+          // review screen, then invalidate current-deal so fresh data is shown.
+          clearPendingDraftCache();
           queryClient.invalidateQueries({ queryKey: getGetCurrentDealQueryKey(serviceId) });
           onDone();
         },
         onError: (err) => {
-          toast({ title: "Failed to confirm", description: (err as { data?: { error?: string } }).data?.error, variant: "destructive" });
+          const errData = err as { data?: { error?: string }; status?: number };
+          const is409 = errData.status === 409;
+          toast({
+            title: is409 ? "Already applied" : "Failed to confirm",
+            description: is409
+              ? "This draft was already applied or discarded."
+              : errData.data?.error,
+            variant: "destructive",
+          });
+          if (is409) {
+            clearPendingDraftCache();
+            onDone(); // clear the draft UI
+          }
+        },
+      },
+    );
+  }
+
+  function handleDiscard() {
+    // Call the real discard API — never just clear client-side state
+    discard.mutate(
+      { id: serviceId, extractionId: draft.extractionId },
+      {
+        onSuccess: () => {
+          toast({ title: "Draft discarded" });
+          // Wipe cache before clearing local state so useEffect cannot restore the
+          // just-discarded draft.
+          clearPendingDraftCache();
+          onDiscard();
+        },
+        onError: (err) => {
+          const errData = err as { data?: { error?: string }; status?: number };
+          // 404 / 409 → treat as already gone
+          if (errData.status === 404 || errData.status === 409) {
+            clearPendingDraftCache();
+            onDiscard();
+            return;
+          }
+          toast({
+            title: "Failed to discard",
+            description: errData.data?.error,
+            variant: "destructive",
+          });
         },
       },
     );
@@ -197,11 +286,14 @@ function ExtractionConfirmScreen({
 
   return (
     <div className="space-y-4">
+      {/* AI disclosure notice */}
       <div className="bg-amber-50 border border-amber-200 rounded-md p-4 flex gap-3 text-sm text-amber-800">
         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
         <div>
           <strong>Review all extracted values before confirming.</strong>{" "}
-          {draft.aiDisclosure} Edit any incorrect values, then click Confirm.
+          This document was processed by the OpenAI API. Document bytes were not retained
+          by Renewal Scout or OpenAI. Edit any incorrect values, then click Confirm.
+          Only confirmed fields are used in research comparisons.
         </div>
       </div>
 
@@ -246,11 +338,21 @@ function ExtractionConfirmScreen({
       </div>
 
       <div className="flex gap-3 pt-2">
-        <Button onClick={handleConfirm} disabled={confirm.isPending} className="gap-2">
+        <Button
+          onClick={handleConfirm}
+          disabled={confirm.isPending || discard.isPending}
+          className="gap-2"
+        >
           {confirm.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
           Confirm {extractedKeys.length - deleted.size} field(s)
         </Button>
-        <Button variant="outline" onClick={onDiscard}>
+        <Button
+          variant="outline"
+          onClick={handleDiscard}
+          disabled={confirm.isPending || discard.isPending}
+          className="gap-2"
+        >
+          {discard.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <X className="h-4 w-4" />}
           Discard
         </Button>
       </div>
@@ -268,8 +370,25 @@ export function CurrentDealTab({ serviceId }: { serviceId: number }) {
   const [draft, setDraft] = useState<ExtractionDraft | null>(null);
   const [isUploading, setIsUploading] = useState(false);
 
+  /**
+   * Consent checkbox — must be ticked before upload is enabled.
+   * Unticked by default (spec requirement: opt-in, not pre-ticked).
+   */
+  const [consentGiven, setConsentGiven] = useState(false);
+
   const { data, isLoading } = useGetCurrentDeal(serviceId);
-  const extract = useExtractDocument();
+
+  // Restore a pending draft from the server on first load (survives page refresh).
+  // Always fetch on mount — if we already have draft in state, the useEffect
+  // below is a no-op (we only set state when draft is still null).
+  const { data: pendingDraft, isLoading: pendingLoading } =
+    useGetPendingExtractionDraft(serviceId);
+
+  useEffect(() => {
+    if (pendingDraft && !draft) {
+      setDraft(pendingDraft);
+    }
+  }, [pendingDraft, draft]);
 
   const fields = (data?.fields ?? {}) as DealFieldsMap;
   const hasAny = Object.keys(fields).length > 0;
@@ -299,6 +418,8 @@ export function CurrentDealTab({ serviceId }: { serviceId: number }) {
       const result = (await res.json()) as ExtractionDraft;
       setDraft(result);
       setEditMode(false);
+      // Reset consent after each upload (re-read before next upload)
+      setConsentGiven(false);
     } catch (err) {
       toast({
         title: "Upload failed",
@@ -311,7 +432,7 @@ export function CurrentDealTab({ serviceId }: { serviceId: number }) {
     }
   }
 
-  if (isLoading) {
+  if (isLoading || pendingLoading) {
     return (
       <div className="flex items-center gap-2 py-8 text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -355,10 +476,39 @@ export function CurrentDealTab({ serviceId }: { serviceId: number }) {
           <CardTitle>Upload a Bill or Letter</CardTitle>
           <CardDescription>
             Upload a PDF, JPG or PNG (max 10 MB) and the AI will extract your current deal details.
-            Your document will be sent to the OpenAI API for processing — it is not stored by Renewal Scout.
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
+          {/* AI data-sharing disclosure */}
+          <div className="bg-muted/50 border rounded-md p-3 flex gap-2.5 text-xs text-muted-foreground">
+            <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-500" />
+            <span>
+              <strong className="text-foreground">AI disclosure:</strong>{" "}
+              Your document will be sent to the OpenAI API for text extraction.
+              Renewal Scout sets <code>store: false</code> so OpenAI does not retain the
+              document content. No document bytes are stored by Renewal Scout.
+              Review all extracted values carefully — AI extraction may contain errors.
+            </span>
+          </div>
+
+          {/* Consent checkbox — must be ticked to enable upload (opt-in, not pre-ticked) */}
+          <div className="flex items-start gap-2.5">
+            <Checkbox
+              id="ai-consent"
+              checked={consentGiven}
+              onCheckedChange={(v) => setConsentGiven(Boolean(v))}
+              className="mt-0.5"
+            />
+            <label
+              htmlFor="ai-consent"
+              className="text-sm leading-snug cursor-pointer select-none"
+            >
+              I understand this document will be sent to the OpenAI API for processing and
+              I consent to this for the purpose of extracting deal information.
+            </label>
+          </div>
+
+          {/* Upload button — disabled until consent is given */}
           <div className="flex items-center gap-3">
             <input
               ref={fileRef}
@@ -370,17 +520,19 @@ export function CurrentDealTab({ serviceId }: { serviceId: number }) {
             <Button
               variant="outline"
               onClick={() => fileRef.current?.click()}
-              disabled={isUploading}
+              disabled={isUploading || !consentGiven}
               className="gap-2"
+              title={!consentGiven ? "Please tick the consent checkbox above to enable upload" : undefined}
             >
               {isUploading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Upload className="h-4 w-4" />}
               {isUploading ? "Extracting…" : "Upload document"}
             </Button>
             <span className="text-xs text-muted-foreground">PDF, JPG, PNG · max 10 MB</span>
           </div>
-          <p className="text-xs text-muted-foreground mt-3 flex gap-1.5">
+
+          <p className="text-xs text-muted-foreground flex gap-1.5">
             <Info className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-            No credentials, bank details, or sensitive personal information should appear in uploaded documents.
+            Do not upload documents containing passwords, bank account details, or National Insurance numbers.
           </p>
         </CardContent>
       </Card>

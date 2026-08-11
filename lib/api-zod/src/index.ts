@@ -17,3 +17,6 @@ export * from "./strict-input";
 // re-exported to avoid duplicate-identifier conflicts with generated/api.ts
 // z.infer aliases (e.g. ExtractDocumentBody, TriggerResearchBody).
 export * from "./completeness-types";
+
+// Versioned service-specific deal schemas (server + shared tooling)
+export * from "./deal-schemas";

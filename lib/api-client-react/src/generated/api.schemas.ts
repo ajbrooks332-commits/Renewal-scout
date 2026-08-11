@@ -257,11 +257,35 @@ export interface CurrentDeal {
   updatedAt: string;
 }
 
-export type CurrentDealInputFields = {[key: string]: ProvenanceField};
+/**
+ * Field name → raw value map. Each entry is saved with source: "user". Omit a field to leave its current value unchanged.
+ */
+export type CurrentDealInputValues = {[key: string]: unknown};
 
+/**
+ * Manual deal update. Clients supply raw field values; the server always assigns source: "user". Clients cannot set provenance directly.
+ */
 export interface CurrentDealInput {
-  fields: CurrentDealInputFields;
+  /** Field name → raw value map. Each entry is saved with source: "user". Omit a field to leave its current value unchanged. */
+  values?: CurrentDealInputValues;
+  /** Field keys whose user-entered values should be removed. Only user-sourced values are removed; extracted_confirmed values are not affected. */
+  clear?: string[];
 }
+
+/**
+ * Lifecycle state of this extraction draft. Only 'draft' status drafts are actionable by the user.
+ */
+export type ExtractionDraftStatus = typeof ExtractionDraftStatus[keyof typeof ExtractionDraftStatus];
+
+
+export const ExtractionDraftStatus = {
+  draft: 'draft',
+  applying: 'applying',
+  applied: 'applied',
+  discarded: 'discarded',
+  expired: 'expired',
+  failed: 'failed',
+} as const;
 
 /**
  * Extracted deal fields — all have source=extracted_unconfirmed until the user confirms them.
@@ -271,22 +295,34 @@ export type ExtractionDraftFields = {[key: string]: ProvenanceField};
 export interface ExtractionDraft {
   extractionId: string;
   serviceId: number;
+  /** Lifecycle state of this extraction draft. Only 'draft' status drafts are actionable by the user. */
+  status: ExtractionDraftStatus;
   /** Extracted deal fields — all have source=extracted_unconfirmed until the user confirms them. */
   fields: ExtractionDraftFields;
   extractedAt: string;
+  /**
+     * ISO timestamp after which this draft expires
+     * @nullable
+     */
+  expiresAt?: string | null;
   /** Human-readable notice that the document was sent to the OpenAI API */
   aiDisclosure: string;
 }
 
 /**
- * Fields to save with source=extracted_confirmed. Pass corrected values here — the user's edits override AI values.
+ * Field name → { value } map. The server assigns source: "extracted_confirmed" to each entry. Omit a field here (or add it to deletedFields) to discard it.
  */
-export type ExtractionConfirmInputConfirmedFields = {[key: string]: ProvenanceField};
+export type ExtractionConfirmInputConfirmedFields = {[key: string]: {
+  value?: unknown;
+}};
 
+/**
+ * Confirmation of extracted field values. Do NOT include a "source" property in confirmedFields — the server always assigns source: "extracted_confirmed".
+ */
 export interface ExtractionConfirmInput {
-  /** Fields to save with source=extracted_confirmed. Pass corrected values here — the user's edits override AI values. */
+  /** Field name → { value } map. The server assigns source: "extracted_confirmed" to each entry. Omit a field here (or add it to deletedFields) to discard it. */
   confirmedFields: ExtractionConfirmInputConfirmedFields;
-  /** Field names to remove from current_deals entirely */
+  /** Field keys from the extraction draft to discard without confirming */
   deletedFields?: string[];
 }
 

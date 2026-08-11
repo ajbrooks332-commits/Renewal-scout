@@ -7,9 +7,12 @@
  */
 import type { ExtractionConfirmInputConfirmedFields } from './extractionConfirmInputConfirmedFields';
 
+/**
+ * Confirmation of extracted field values. Do NOT include a "source" property in confirmedFields — the server always assigns source: "extracted_confirmed".
+ */
 export interface ExtractionConfirmInput {
-  /** Fields to save with source=extracted_confirmed. Pass corrected values here — the user's edits override AI values. */
+  /** Field name → { value } map. The server assigns source: "extracted_confirmed" to each entry. Omit a field here (or add it to deletedFields) to discard it. */
   confirmedFields: ExtractionConfirmInputConfirmedFields;
-  /** Field names to remove from current_deals entirely */
+  /** Field keys from the extraction draft to discard without confirming */
   deletedFields?: string[];
 }

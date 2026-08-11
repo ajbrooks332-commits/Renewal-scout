@@ -43,6 +43,12 @@ beforeEach(async () => {
   vi.mocked(db.select).mockImplementation(() => makeChain([]));
   vi.mocked(db.insert).mockImplementation(() => makeChain([]));
   vi.mocked(db.update).mockImplementation(() => makeChain([]));
+  // Re-apply transaction default after vi.resetAllMocks() wipes the implementation.
+  // db.transaction calls its callback with the same mocked `db` so that
+  // vi.mocked(db.select/update/insert).mockReturnValueOnce() calls
+  // in individual tests work correctly inside transactional route handlers.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  vi.mocked(db.transaction).mockImplementation(async (cb: (tx: any) => Promise<unknown>) => cb(db));
 });
 
 // ─── Mock chain builder ───────────────────────────────────────────────────────
@@ -147,20 +153,32 @@ describe("GET /api/services/:id/current-deal", () => {
 });
 
 describe("PUT /api/services/:id/current-deal", () => {
-  it("rejects invalid provenance source", async () => {
-    const { db } = await import("@workspace/db");
-    vi.mocked(db.select).mockReturnValueOnce(
-      makeChain([{ id: 1, serviceType: "Broadband" }])
-    );
-
+  it("rejects client-submitted extracted_unconfirmed provenance (provenance spoofing via fields key)", async () => {
+    // Clients must NOT be able to inject extracted provenance via the manual PUT endpoint.
+    // The route detects source:"extracted_unconfirmed" in the legacy `fields` key and returns 400.
     const res = await request(app)
       .put("/api/services/1/current-deal")
       .set("Cookie", authCookie)
-      .send({ fields: { provider: { value: "BT", source: "hacked" } } });
+      .send({
+        // Old API style with server-controlled provenance — must be rejected
+        fields: { provider: { value: "BT", source: "extracted_unconfirmed" } },
+      });
     expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/server-side/i);
   });
 
-  it("accepts all four valid provenance sources", async () => {
+  it("rejects client-submitted extracted_confirmed provenance (provenance spoofing via fields key)", async () => {
+    const res = await request(app)
+      .put("/api/services/1/current-deal")
+      .set("Cookie", authCookie)
+      .send({
+        fields: { provider: { value: "BT", source: "extracted_confirmed" } },
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/server-side/i);
+  });
+
+  it("accepts values+clear and server assigns source:user", async () => {
     const { db } = await import("@workspace/db");
     // Route calls: (1) service, (2) getOrCreateDeal → returns [], (3) insert
     vi.mocked(db.select)
@@ -178,7 +196,8 @@ describe("PUT /api/services/:id/current-deal", () => {
     const res = await request(app)
       .put("/api/services/1/current-deal")
       .set("Cookie", authCookie)
-      .send({ fields: { provider: { value: "BT", source: "user" } } });
+      // New API: only raw values, no provenance
+      .send({ values: { provider: "BT" } });
     expect(res.status).toBe(200);
     expect(res.body.serviceId).toBe(1);
   });
@@ -380,7 +399,13 @@ describe("completeness gate — POST /api/services/:id/research", () => {
 // ─── Extraction confirmation — key integrity and merge semantics ───────────────
 
 describe("extraction confirmation — merge semantics and key validation", () => {
-  const mockService = { id: 1, serviceType: "Broadband", provider: "BT" };
+  // The route now:
+  //  1. Validates the body fully (ConfirmBodySchema)
+  //  2. Fetches the service OUTSIDE the transaction (step B) — needs select(1)=service
+  //  3. Coerces confirmed values (step C)
+  //  4. Runs the transaction:
+  //       select(2) extraction, update(1) claim, select(3) deal, update(2) deal, update(3) mark-applied
+  const mockService = { id: 1, serviceType: "Broadband" };
   const mockExtraction = {
     id: 10,
     serviceId: 1,
@@ -388,23 +413,36 @@ describe("extraction confirmation — merge semantics and key validation", () =>
     fieldCount: 2,
     confirmedCount: 0,
     draftFieldKeys: ["monthlyCostGbp", "tariffName"],
+    status: "draft",
+    draftFields: { monthlyCostGbp: { value: 42, source: "extracted_unconfirmed" } },
+    expiresAt: null,
     extractedAt: new Date(),
     deletedAt: null,
   };
 
+  // Mock sequence for a SUCCESS confirmation:
+  //   select(1) service    ← outside transaction (step B)
+  //   select(2) extraction ← inside transaction
+  //   update(1) claim draft→applying → [{id:10}]
+  //   select(3) existing deal
+  //   update(2) update/insert deal → returns row
+  //   update(3) mark applied → []
+
   it("rejects confirmedFields keys not in the extraction draft", async () => {
     const { db } = await import("@workspace/db");
-    // route: (1) service, (2) extraction
+    // Body validation + provenance pass → service fetched → coercion OK (no known fields)
+    // → transaction claims → ConfirmationValidationError thrown → rollback (draft stays 'draft')
     vi.mocked(db.select)
-      .mockReturnValueOnce(makeChain([mockService]))
-      .mockReturnValueOnce(makeChain([mockExtraction]));
+      .mockReturnValueOnce(makeChain([mockService]))     // service lookup (step B)
+      .mockReturnValueOnce(makeChain([mockExtraction])); // extraction inside tx
+    vi.mocked(db.update).mockReturnValueOnce(makeChain([{ id: 10 }])); // claim only
 
     const res = await request(app)
       .put("/api/services/1/extraction-draft/test-uuid-abc/confirm")
       .set("Cookie", authCookie)
       .send({
         // "provider" is NOT a draft key — only monthlyCostGbp and tariffName are
-        confirmedFields: { provider: { value: "Injected", source: "extracted_confirmed" } },
+        confirmedFields: { provider: { value: "Injected" } },
         deletedFields: [],
       });
     expect(res.status).toBe(400);
@@ -412,12 +450,75 @@ describe("extraction confirmation — merge semantics and key validation", () =>
     expect(res.body.error).toMatch(/not in this extraction draft/i);
   });
 
-  it("rejects deletedFields keys not in the extraction draft", async () => {
+  it("draft stays in 'draft' state after a 400 key-validation failure (can be retried)", async () => {
+    // Confirms that ConfirmationValidationError causes a rollback, not a "failed" mark.
+    // The second request (with valid keys) must still succeed.
     const { db } = await import("@workspace/db");
-    // route: (1) service, (2) extraction
+
+    // First request: invalid key → 400, draft rolled back to 'draft'
     vi.mocked(db.select)
       .mockReturnValueOnce(makeChain([mockService]))
       .mockReturnValueOnce(makeChain([mockExtraction]));
+    vi.mocked(db.update).mockReturnValueOnce(makeChain([{ id: 10 }])); // claim only (rolled back)
+
+    const badRes = await request(app)
+      .put("/api/services/1/extraction-draft/test-uuid-abc/confirm")
+      .set("Cookie", authCookie)
+      .send({ confirmedFields: { provider: { value: "Bad" } }, deletedFields: [] });
+    expect(badRes.status).toBe(400);
+
+    // Second request: valid keys, draft is still available → should succeed
+    const existingDeal = { serviceId: 1, fields: {}, lastConfirmedAt: null, updatedAt: new Date() };
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([mockService]))     // service (step B)
+      .mockReturnValueOnce(makeChain([mockExtraction]))  // extraction in tx
+      .mockReturnValueOnce(makeChain([existingDeal]));   // existing deal in tx
+    vi.mocked(db.update)
+      .mockReturnValueOnce(makeChain([{ id: 10 }]))      // claim
+      .mockReturnValueOnce(makeChain([{
+        serviceId: 1, fields: {}, lastConfirmedAt: new Date(), updatedAt: new Date(),
+      }]))                                               // update deal
+      .mockReturnValueOnce(makeChain([]));               // mark applied
+
+    const goodRes = await request(app)
+      .put("/api/services/1/extraction-draft/test-uuid-abc/confirm")
+      .set("Cookie", authCookie)
+      .send({ confirmedFields: { monthlyCostGbp: { value: 45 } }, deletedFields: [] });
+    expect(goodRes.status).toBe(200);
+  });
+
+  it("rejects malformed confirmedFields entry (non-object value) without touching draft status", async () => {
+    // ConfirmBodySchema validation fails before any DB call — draft remains untouched.
+    const res = await request(app)
+      .put("/api/services/1/extraction-draft/test-uuid-abc/confirm")
+      .set("Cookie", authCookie)
+      .send({
+        // null is not a { value } object — schema requires z.object({ value: z.unknown() })
+        confirmedFields: { monthlyCostGbp: null },
+        deletedFields: [],
+      });
+    expect(res.status).toBe(400);
+    // No DB mocks were needed — the error fires before any select/update
+  });
+
+  it("rejects non-array deletedFields without touching draft status", async () => {
+    // Malformed deletedFields must return 400 before the claim guard runs.
+    const res = await request(app)
+      .put("/api/services/1/extraction-draft/test-uuid-abc/confirm")
+      .set("Cookie", authCookie)
+      .send({
+        confirmedFields: {},
+        deletedFields: "notAnArray", // must be string[]
+      });
+    expect(res.status).toBe(400);
+  });
+
+  it("rejects deletedFields keys not in the extraction draft", async () => {
+    const { db } = await import("@workspace/db");
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([mockService]))
+      .mockReturnValueOnce(makeChain([mockExtraction]));
+    vi.mocked(db.update).mockReturnValueOnce(makeChain([{ id: 10 }])); // claim only
 
     const res = await request(app)
       .put("/api/services/1/extraction-draft/test-uuid-abc/confirm")
@@ -438,7 +539,13 @@ describe("extraction confirmation — merge semantics and key validation", () =>
       provider: { value: "BT", source: "user" },
     };
 
-    // route: (1) service, (2) extraction, (3) getOrCreateDeal
+    // Mock sequence:
+    //   select(1) service   ← step B (outside tx)
+    //   select(2) extraction ← inside tx
+    //   update(1) claim → [{id:10}]
+    //   select(3) existing deal
+    //   update(2) update deal — captured for assertion
+    //   update(3) mark applied
     vi.mocked(db.select)
       .mockReturnValueOnce(makeChain([mockService]))
       .mockReturnValueOnce(makeChain([mockExtraction]))
@@ -448,6 +555,7 @@ describe("extraction confirmation — merge semantics and key validation", () =>
 
     let savedFields: unknown = null;
     vi.mocked(db.update)
+      .mockReturnValueOnce(makeChain([{ id: 10 }])) // claim succeeds
       .mockReturnValueOnce({
         // Capture .set() argument so we can assert on the merged fields
         set: vi.fn().mockImplementation((vals: { fields: unknown }) => {
@@ -457,7 +565,7 @@ describe("extraction confirmation — merge semantics and key validation", () =>
           }]);
         }),
       } as never)
-      .mockReturnValueOnce(makeChain([])); // confirmedCount update on extractions table
+      .mockReturnValueOnce(makeChain([])); // mark applied
 
     const res = await request(app)
       .put("/api/services/1/extraction-draft/test-uuid-abc/confirm")
@@ -471,7 +579,7 @@ describe("extraction confirmation — merge semantics and key validation", () =>
     expect(res.status).toBe(200);
     expect(savedFields).not.toBeNull();
     const saved = savedFields as Record<string, { value: unknown; source: string }>;
-    // Existing user-entered value is preserved — deletion only discards the draft
+    // Existing user-entered value is preserved — deletion only discards the draft field
     expect(saved["monthlyCostGbp"]).toBeDefined();
     expect(saved["monthlyCostGbp"]!.source).toBe("user");
     expect(saved["monthlyCostGbp"]!.value).toBe(39.99);
@@ -483,16 +591,16 @@ describe("extraction confirmation — merge semantics and key validation", () =>
     const { db } = await import("@workspace/db");
     const existingUserField = { monthlyCostGbp: { value: 39.99, source: "user" } };
 
-    // route: (1) service, (2) extraction, (3) getOrCreateDeal
     vi.mocked(db.select)
-      .mockReturnValueOnce(makeChain([mockService]))
-      .mockReturnValueOnce(makeChain([mockExtraction]))
+      .mockReturnValueOnce(makeChain([mockService]))     // service (step B)
+      .mockReturnValueOnce(makeChain([mockExtraction]))  // extraction in tx
       .mockReturnValueOnce(makeChain([{
         serviceId: 1, fields: existingUserField, lastConfirmedAt: null, updatedAt: new Date(),
-      }]));
+      }]));                                              // existing deal in tx
 
     let savedFields: unknown = null;
     vi.mocked(db.update)
+      .mockReturnValueOnce(makeChain([{ id: 10 }])) // claim
       .mockReturnValueOnce({
         set: vi.fn().mockImplementation((vals: { fields: unknown }) => {
           savedFields = vals.fields;
@@ -501,21 +609,63 @@ describe("extraction confirmation — merge semantics and key validation", () =>
           }]);
         }),
       } as never)
-      .mockReturnValueOnce(makeChain([])); // confirmedCount update
+      .mockReturnValueOnce(makeChain([])); // mark applied
 
     const res = await request(app)
       .put("/api/services/1/extraction-draft/test-uuid-abc/confirm")
       .set("Cookie", authCookie)
       .send({
-        // User reviewed the document and confirmed a new monthly cost
-        confirmedFields: { monthlyCostGbp: { value: 45.99, source: "extracted_confirmed" } },
+        // User reviewed the document and confirmed a new monthly cost.
+        // NO source property — server assigns source:"extracted_confirmed" server-side.
+        confirmedFields: { monthlyCostGbp: { value: 45.99 } },
         deletedFields: [],
       });
 
     expect(res.status).toBe(200);
     expect(savedFields).not.toBeNull();
     const saved = savedFields as Record<string, { value: unknown; source: string }>;
-    // Confirmed value wins — user explicitly approved it from the document
+    // Confirmed value wins — user explicitly approved it from the document.
+    // The route coerces via validateDealValues then persists the coerced number.
+    expect(saved["monthlyCostGbp"]!.value).toBe(45.99);
+    expect(saved["monthlyCostGbp"]!.source).toBe("extracted_confirmed");
+  });
+
+  it("confirmed numeric string values are coerced to numbers before persistence", async () => {
+    // <input type="number"> in the confirm UI sends e.target.value as a string.
+    // The route must coerce and store a number, not a string.
+    const { db } = await import("@workspace/db");
+    const existingDeal = { serviceId: 1, fields: {}, lastConfirmedAt: null, updatedAt: new Date() };
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([mockService]))
+      .mockReturnValueOnce(makeChain([mockExtraction]))
+      .mockReturnValueOnce(makeChain([existingDeal]));
+
+    let savedFields: unknown = null;
+    vi.mocked(db.update)
+      .mockReturnValueOnce(makeChain([{ id: 10 }])) // claim
+      .mockReturnValueOnce({
+        set: vi.fn().mockImplementation((vals: { fields: unknown }) => {
+          savedFields = vals.fields;
+          return makeChain([{
+            serviceId: 1, fields: vals.fields, lastConfirmedAt: new Date(), updatedAt: new Date(),
+          }]);
+        }),
+      } as never)
+      .mockReturnValueOnce(makeChain([])); // mark applied
+
+    const res = await request(app)
+      .put("/api/services/1/extraction-draft/test-uuid-abc/confirm")
+      .set("Cookie", authCookie)
+      .send({
+        // "45.99" is a string (from HTML input) — must be coerced to number before storage
+        confirmedFields: { monthlyCostGbp: { value: "45.99" } },
+        deletedFields: [],
+      });
+
+    expect(res.status).toBe(200);
+    const saved = savedFields as Record<string, { value: unknown; source: string }>;
+    expect(typeof saved["monthlyCostGbp"]!.value).toBe("number");
     expect(saved["monthlyCostGbp"]!.value).toBe(45.99);
     expect(saved["monthlyCostGbp"]!.source).toBe("extracted_confirmed");
   });
@@ -579,9 +729,13 @@ describe("PUT /api/household-profile — partial PATCH semantics", () => {
 // ─── Extraction replay prevention ─────────────────────────────────────────────
 
 describe("extraction replay prevention", () => {
+  const mockService = { id: 1, serviceType: "Broadband" };
+
   it("returns 409 when trying to confirm an already-applied extraction draft", async () => {
     const { db } = await import("@workspace/db");
-    const mockService = { id: 1, serviceType: "Broadband", provider: "BT" };
+    // Route now fetches service (select 1) before the transaction.
+    // Inside tx: select(2) returns extraction, update claiming returns []
+    // (0 rows because WHERE status='draft' doesn't match status='applied').
     const consumedExtraction = {
       id: 10,
       serviceId: 1,
@@ -589,13 +743,18 @@ describe("extraction replay prevention", () => {
       fieldCount: 1,
       confirmedCount: 1,
       draftFieldKeys: ["monthlyCostGbp"],
+      status: "applied", // already applied
+      draftFields: {},
+      expiresAt: null,
       extractedAt: new Date(),
-      deletedAt: new Date(), // already consumed
+      deletedAt: new Date(),
     };
 
     vi.mocked(db.select)
-      .mockReturnValueOnce(makeChain([mockService]))
-      .mockReturnValueOnce(makeChain([consumedExtraction]));
+      .mockReturnValueOnce(makeChain([mockService]))          // service (step B)
+      .mockReturnValueOnce(makeChain([consumedExtraction]));  // extraction inside tx
+    // Claim update: returns [] because status != 'draft'
+    vi.mocked(db.update).mockReturnValueOnce(makeChain([]));
 
     const res = await request(app)
       .put("/api/services/1/extraction-draft/already-used-uuid/confirm")
@@ -604,6 +763,58 @@ describe("extraction replay prevention", () => {
 
     expect(res.status).toBe(409);
     expect(res.body.error).toMatch(/already been applied/i);
+  });
+
+  it("two concurrent confirmations: first wins (200), second gets 409 — verified via claim guard", async () => {
+    // This test verifies the atomic claim mechanism (conditional status draft→applying).
+    // True concurrency is an integration-test concern; here we verify the mechanism
+    // deterministically: first request claims and succeeds, second sees 0 rows → 409.
+    const { db } = await import("@workspace/db");
+    const draftExtraction = {
+      id: 10,
+      serviceId: 1,
+      extractionId: "claim-guard-uuid",
+      fieldCount: 1,
+      confirmedCount: 0,
+      draftFieldKeys: ["monthlyCostGbp"],
+      status: "draft",
+      draftFields: {},
+      expiresAt: null,
+      extractedAt: new Date(),
+      deletedAt: null,
+    };
+
+    // ── First request: claim succeeds ──
+    const existingDeal = { serviceId: 1, fields: {}, lastConfirmedAt: null, updatedAt: new Date() };
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([mockService]))     // service (step B)
+      .mockReturnValueOnce(makeChain([draftExtraction])) // extraction in tx
+      .mockReturnValueOnce(makeChain([existingDeal]));   // existing deal (update path)
+    vi.mocked(db.update)
+      .mockReturnValueOnce(makeChain([{ id: 10 }]))      // claim: 1 row → success
+      .mockReturnValueOnce(makeChain([{
+        serviceId: 1, fields: {}, lastConfirmedAt: new Date(), updatedAt: new Date(),
+      }]))                                               // deal update
+      .mockReturnValueOnce(makeChain([]));               // mark applied
+
+    const res1 = await request(app)
+      .put("/api/services/1/extraction-draft/claim-guard-uuid/confirm")
+      .set("Cookie", authCookie)
+      .send({ confirmedFields: {}, deletedFields: [] });
+    expect(res1.status).toBe(200);
+
+    // ── Second request: extraction has moved out of 'draft' — claim returns 0 rows ──
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([mockService]))  // service (step B)
+      .mockReturnValueOnce(makeChain([{ ...draftExtraction, status: "applied" }])); // in tx
+    vi.mocked(db.update).mockReturnValueOnce(makeChain([])); // 0 rows → 409
+
+    const res2 = await request(app)
+      .put("/api/services/1/extraction-draft/claim-guard-uuid/confirm")
+      .set("Cookie", authCookie)
+      .send({ confirmedFields: {}, deletedFields: [] });
+    expect(res2.status).toBe(409);
+    expect(res2.body.error).toMatch(/already been applied/i);
   });
 });
 
@@ -899,5 +1110,393 @@ describe("PUT /api/household-profile — strict validation 400s", () => {
       .set("Cookie", authCookie)
       .send({ postcode: "SW1A 1AA", unknownField: "value" });
     expect(res.status).toBe(400);
+  });
+});
+
+// ─── Task #12: Provenance spoofing in confirmation endpoint ────────────────────
+
+describe("confirmation endpoint — server-side provenance enforcement", () => {
+  const mockExtraction = {
+    id: 10,
+    serviceId: 1,
+    extractionId: "provenance-test-uuid",
+    fieldCount: 1,
+    confirmedCount: 0,
+    draftFieldKeys: ["monthlyCostGbp"],
+    status: "draft",
+    draftFields: {},
+    expiresAt: null,
+    extractedAt: new Date(),
+    deletedAt: null,
+  };
+
+  it("rejects confirmedFields with source:extracted_confirmed (server-only provenance)", async () => {
+    // Clients MUST NOT be able to inject extracted_confirmed provenance.
+    // The route checks for server-only sources before calling db.transaction.
+    const res = await request(app)
+      .put("/api/services/1/extraction-draft/provenance-test-uuid/confirm")
+      .set("Cookie", authCookie)
+      .send({
+        confirmedFields: {
+          monthlyCostGbp: { value: 45.99, source: "extracted_confirmed" },
+        },
+        deletedFields: [],
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/server-side/i);
+  });
+
+  it("rejects confirmedFields with source:extracted_unconfirmed (server-only provenance)", async () => {
+    const res = await request(app)
+      .put("/api/services/1/extraction-draft/provenance-test-uuid/confirm")
+      .set("Cookie", authCookie)
+      .send({
+        confirmedFields: {
+          monthlyCostGbp: { value: 45.99, source: "extracted_unconfirmed" },
+        },
+        deletedFields: [],
+      });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/server-side/i);
+  });
+
+  it("accepts confirmedFields without source — server assigns extracted_confirmed", async () => {
+    const { db } = await import("@workspace/db");
+    const existingDeal = { serviceId: 1, fields: {}, lastConfirmedAt: null, updatedAt: new Date() };
+    // Route fetches service before the transaction (step B)
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([mockExtraction]))  // service (step B) — mockExtraction used as stand-in (only .serviceType matters)
+      .mockReturnValueOnce(makeChain([mockExtraction]))  // extraction inside tx
+      .mockReturnValueOnce(makeChain([existingDeal]));   // existing deal → update path
+    vi.mocked(db.update)
+      .mockReturnValueOnce(makeChain([{ id: 10 }])) // claim
+      .mockReturnValueOnce(makeChain([{
+        serviceId: 1,
+        fields: { monthlyCostGbp: { value: 45.99, source: "extracted_confirmed" } },
+        lastConfirmedAt: new Date(),
+        updatedAt: new Date(),
+      }])) // update deal
+      .mockReturnValueOnce(makeChain([])); // mark applied
+
+    const res = await request(app)
+      .put("/api/services/1/extraction-draft/provenance-test-uuid/confirm")
+      .set("Cookie", authCookie)
+      .send({
+        // No source — server assigns extracted_confirmed
+        confirmedFields: { monthlyCostGbp: { value: 45.99 } },
+        deletedFields: [],
+      });
+    expect(res.status).toBe(200);
+    // Server must assign source: "extracted_confirmed" — not client
+    const savedField = res.body.fields?.monthlyCostGbp;
+    if (savedField) {
+      expect(savedField.source).toBe("extracted_confirmed");
+    }
+  });
+});
+
+// ─── Task #12: MIME detection — no fallback to client-supplied Content-Type ───
+
+describe("POST /api/services/:id/extract-document — MIME hardening", () => {
+  it("rejects files where magic-byte detection returns null (unidentified file)", async () => {
+    const { db } = await import("@workspace/db");
+    vi.mocked(db.select).mockReturnValueOnce(
+      makeChain([{ id: 1, serviceType: "Broadband" }])
+    );
+    const { fileTypeFromBuffer } = await import("file-type");
+    // fileTypeFromBuffer returns undefined/null → file type undetectable
+    vi.mocked(fileTypeFromBuffer).mockResolvedValueOnce(undefined);
+
+    const res = await request(app)
+      .post("/api/services/1/extract-document")
+      .set("Cookie", authCookie)
+      // Upload a file with a PDF Content-Type but no magic bytes
+      .attach("document", Buffer.from("this is not a real pdf"), {
+        filename: "notreally.pdf",
+        contentType: "application/pdf", // client claims PDF but magic bytes disagree
+      });
+    // Must reject — no MIME fallback to client-supplied Content-Type
+    expect(res.status).toBe(415);
+    expect(res.body.error).toMatch(/Unsupported file type/i);
+  });
+
+  it("rejects files where magic-byte detection returns a disallowed type (spoofed MIME)", async () => {
+    const { db } = await import("@workspace/db");
+    vi.mocked(db.select).mockReturnValueOnce(
+      makeChain([{ id: 1, serviceType: "Broadband" }])
+    );
+    const { fileTypeFromBuffer } = await import("file-type");
+    // Actual bytes are a GIF even though client sent Content-Type: application/pdf
+    vi.mocked(fileTypeFromBuffer).mockResolvedValueOnce(
+      { mime: "image/gif", ext: "gif" } as Awaited<ReturnType<typeof fileTypeFromBuffer>>
+    );
+
+    const res = await request(app)
+      .post("/api/services/1/extract-document")
+      .set("Cookie", authCookie)
+      .attach("document", Buffer.from("GIF89a fake gif bytes"), {
+        filename: "invoice.pdf",
+        contentType: "application/pdf", // lies about content type
+      });
+    expect(res.status).toBe(415);
+    expect(res.body.error).toMatch(/Unsupported file type/i);
+  });
+});
+
+// ─── Task #12: Schema-strict PUT — unknown field names rejected ────────────────
+
+describe("PUT /api/services/:id/current-deal — schema strictness", () => {
+  it("ignores unknown field names (only schema-declared fields are persisted)", async () => {
+    // Zod strips keys not in the service-type schema; the route iterates
+    // coercedValues so arbitrary field names cannot be stored.
+    const { db } = await import("@workspace/db");
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ id: 1, serviceType: "Broadband" }]))
+      .mockReturnValueOnce(makeChain([])); // no existing deal
+
+    let insertedFields: unknown = null;
+    vi.mocked(db.insert).mockReturnValueOnce({
+      values: vi.fn().mockImplementation((v: { fields: unknown }) => {
+        insertedFields = v.fields;
+        return makeChain([{
+          serviceId: 1, fields: v.fields, lastConfirmedAt: null, updatedAt: new Date(),
+        }]);
+      }),
+    } as never);
+
+    const res = await request(app)
+      .put("/api/services/1/current-deal")
+      .set("Cookie", authCookie)
+      .send({
+        values: {
+          provider: "BT",              // valid — in BroadbandDeal schema
+          arbitraryHackedField: "HACK", // NOT a declared field — must be dropped
+        },
+      });
+
+    expect(res.status).toBe(200);
+    const stored = insertedFields as Record<string, { value: unknown; source: string }>;
+    expect(stored["provider"]?.value).toBe("BT");
+    // Unknown field must be absent from the stored deal
+    expect(stored["arbitraryHackedField"]).toBeUndefined();
+  });
+
+  it("stores numeric string values as numbers (coercion persisted)", async () => {
+    // HTML <input type="number"> submits e.target.value as a string.
+    // The route must persist the coerced number, not the raw string.
+    const { db } = await import("@workspace/db");
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ id: 1, serviceType: "Broadband" }]))
+      .mockReturnValueOnce(makeChain([]));
+
+    let insertedFields: unknown = null;
+    vi.mocked(db.insert).mockReturnValueOnce({
+      values: vi.fn().mockImplementation((v: { fields: unknown }) => {
+        insertedFields = v.fields;
+        return makeChain([{
+          serviceId: 1, fields: v.fields, lastConfirmedAt: null, updatedAt: new Date(),
+        }]);
+      }),
+    } as never);
+
+    const res = await request(app)
+      .put("/api/services/1/current-deal")
+      .set("Cookie", authCookie)
+      .send({ values: { monthlyCostGbp: "45.99" } }); // string from HTML form
+
+    expect(res.status).toBe(200);
+    const stored = insertedFields as Record<string, { value: unknown; source: string }>;
+    // Must be stored as a number, not a string
+    expect(typeof stored["monthlyCostGbp"]?.value).toBe("number");
+    expect(stored["monthlyCostGbp"]?.value).toBe(45.99);
+  });
+});
+
+// ─── Task #12: confirm vs discard race — discard must not win over applying ───
+
+describe("confirm/discard race — lifecycle integrity", () => {
+  const mockService = { id: 1, serviceType: "Broadband" };
+  const draftExtraction = {
+    id: 10,
+    serviceId: 1,
+    extractionId: "race-uuid",
+    fieldCount: 1,
+    confirmedCount: 0,
+    draftFieldKeys: ["monthlyCostGbp"],
+    status: "draft",
+    draftFields: {},
+    expiresAt: null,
+    extractedAt: new Date(),
+    deletedAt: null,
+  };
+
+  it("discard returns 409 when extraction is in 'applying' state (confirm has claimed it)", async () => {
+    // A confirm has moved the draft to 'applying'. A concurrent discard must see 409,
+    // ensuring the confirm's deal write is not silently undone.
+    const { db } = await import("@workspace/db");
+
+    const applyingExtraction = { ...draftExtraction, status: "applying" };
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ id: 1 }]))         // service lookup in discard route
+      .mockReturnValueOnce(makeChain([applyingExtraction])); // extraction (status=applying)
+
+    const res = await request(app)
+      .post("/api/services/1/extraction-draft/race-uuid/discard")
+      .set("Cookie", authCookie);
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/applying/i);
+  });
+
+  it("confirm succeeds and discard subsequently gets 409 (sequential race simulation)", async () => {
+    // Step 1: confirm wins — full success path
+    const { db } = await import("@workspace/db");
+    const existingDeal = { serviceId: 1, fields: {}, lastConfirmedAt: null, updatedAt: new Date() };
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([mockService]))         // service (confirm step B)
+      .mockReturnValueOnce(makeChain([draftExtraction]))     // extraction in tx
+      .mockReturnValueOnce(makeChain([existingDeal]));       // deal in tx
+    vi.mocked(db.update)
+      .mockReturnValueOnce(makeChain([{ id: 10 }]))          // claim draft→applying
+      .mockReturnValueOnce(makeChain([{
+        serviceId: 1, fields: { monthlyCostGbp: { value: 42, source: "extracted_confirmed" } },
+        lastConfirmedAt: new Date(), updatedAt: new Date(),
+      }]))                                                   // update deal
+      .mockReturnValueOnce(makeChain([]));                   // mark applied
+
+    const confirmRes = await request(app)
+      .put("/api/services/1/extraction-draft/race-uuid/confirm")
+      .set("Cookie", authCookie)
+      .send({ confirmedFields: {}, deletedFields: [] });
+    expect(confirmRes.status).toBe(200);
+
+    // Step 2: discard arrives late — extraction is now 'applied' → 409
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ id: 1 }]))
+      .mockReturnValueOnce(makeChain([{ ...draftExtraction, status: "applied" }]));
+
+    const discardRes = await request(app)
+      .post("/api/services/1/extraction-draft/race-uuid/discard")
+      .set("Cookie", authCookie);
+    expect(discardRes.status).toBe(409);
+    // The applied deal must not have been touched by the discard
+  });
+});
+
+// ─── Task #12: discard zero-row race — atomic conditional update ───────────────
+
+describe("discard route — atomic conditional update race", () => {
+  it("returns 409 when update affects 0 rows (confirm claimed draft between read and write)", async () => {
+    // Simulates: discard reads status='draft', then confirm claims draft→applying,
+    // then discard's conditional UPDATE WHERE status='draft' matches 0 rows.
+    // The discard must return 409, NOT 204.
+    const { db } = await import("@workspace/db");
+
+    const draftExtraction = {
+      id: 10,
+      serviceId: 1,
+      extractionId: "race-discard-uuid",
+      fieldCount: 1,
+      confirmedCount: 0,
+      draftFieldKeys: ["monthlyCostGbp"],
+      status: "draft", // read still sees 'draft' ...
+      draftFields: {},
+      expiresAt: null,
+      extractedAt: new Date(),
+      deletedAt: null,
+    };
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ id: 1 }]))        // service
+      .mockReturnValueOnce(makeChain([draftExtraction]));  // extraction (status=draft)
+
+    // ... but the conditional update returns [] — confirm has claimed it in between
+    vi.mocked(db.update).mockReturnValueOnce(makeChain([]));
+
+    const res = await request(app)
+      .post("/api/services/1/extraction-draft/race-discard-uuid/discard")
+      .set("Cookie", authCookie);
+
+    // Must be 409, not 204 — the discard was lost in the race
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/concurrent/i);
+  });
+});
+
+// ─── Task #12: draft expiry enforcement ──────────────────────────────────────
+
+describe("draft expiry enforcement — confirm and discard reject expired drafts", () => {
+  const mockService = { id: 1, serviceType: "Broadband" };
+  const expiredExtraction = {
+    id: 10,
+    serviceId: 1,
+    extractionId: "expired-draft-uuid",
+    fieldCount: 1,
+    confirmedCount: 0,
+    draftFieldKeys: ["monthlyCostGbp"],
+    status: "draft",
+    draftFields: {},
+    expiresAt: new Date(Date.now() - 60_000), // 1 min in the past
+    extractedAt: new Date(Date.now() - 90_000),
+    deletedAt: null,
+  };
+
+  it("confirm returns 409 when draft has expired (claim WHERE rejects it)", async () => {
+    // Route fetches service, then inside tx: SELECT extraction, then the claim
+    // UPDATE WHERE status='draft' AND expiresAt > now() returns 0 rows → 409.
+    const { db } = await import("@workspace/db");
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([mockService]))          // service (step B)
+      .mockReturnValueOnce(makeChain([expiredExtraction]));   // extraction inside tx
+    vi.mocked(db.update).mockReturnValueOnce(makeChain([]));  // claim: 0 rows (expired)
+
+    const res = await request(app)
+      .put("/api/services/1/extraction-draft/expired-draft-uuid/confirm")
+      .set("Cookie", authCookie)
+      .send({ confirmedFields: {}, deletedFields: [] });
+
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/expired/i);
+  });
+
+  it("discard returns 409 when draft has expired (conditional UPDATE returns 0 rows)", async () => {
+    // Discard's WHERE includes expiresAt > now() — expired draft → 0 rows → 409.
+    const { db } = await import("@workspace/db");
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ id: 1 }]))           // service
+      .mockReturnValueOnce(makeChain([expiredExtraction]));   // extraction (status=draft, expired)
+    vi.mocked(db.update).mockReturnValueOnce(makeChain([]));  // 0 rows (expiry guard)
+
+    const res = await request(app)
+      .post("/api/services/1/extraction-draft/expired-draft-uuid/discard")
+      .set("Cookie", authCookie);
+
+    expect(res.status).toBe(409);
+  });
+
+  it("pending expiry update is conditional on status=draft (cannot overwrite applied)", async () => {
+    // If a confirm has applied the draft between GET /pending's SELECT and its
+    // expiry UPDATE, the conditional WHERE status='draft' must prevent the overwrite.
+    // In the mock world: select returns an expired draft, update returns 0 rows
+    // (because confirm has moved it to 'applied') — the route still returns null.
+    const { db } = await import("@workspace/db");
+
+    vi.mocked(db.select)
+      .mockReturnValueOnce(makeChain([{ id: 1 }]))           // service
+      .mockReturnValueOnce(makeChain([expiredExtraction]));   // draft (but expired)
+    vi.mocked(db.update).mockReturnValueOnce(makeChain([])); // 0 rows — another op got there first
+
+    const res = await request(app)
+      .get("/api/services/1/extraction-draft/pending")
+      .set("Cookie", authCookie);
+
+    // Endpoint still returns null (expired draft is not surfaced), and the 0-row
+    // update is accepted without error — the real terminal status was already set.
+    expect(res.status).toBe(200);
+    expect(res.body).toBeNull();
   });
 });

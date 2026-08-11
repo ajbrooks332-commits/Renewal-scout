@@ -587,11 +587,9 @@ export const UpdateCurrentDealParams = zod.object({
 })
 
 export const UpdateCurrentDealBody = zod.object({
-  "fields": zod.record(zod.string(), zod.object({
-  "value": zod.unknown().optional(),
-  "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
-}))
-})
+  "values": zod.record(zod.string(), zod.unknown()).optional().describe('Field name → raw value map. Each entry is saved with source: \"user\". Omit a field to leave its current value unchanged.\n'),
+  "clear": zod.array(zod.string()).optional().describe('Field keys whose user-entered values should be removed. Only user-sourced values are removed; extracted_confirmed values are not affected.\n')
+}).describe('Manual deal update. Clients supply raw field values; the server always assigns source: \"user\". Clients cannot set provenance directly.\n')
 
 export const UpdateCurrentDealResponse = zod.object({
   "serviceId": zod.number(),
@@ -619,11 +617,13 @@ export const ExtractDocumentBody = zod.object({
 export const ExtractDocumentResponse = zod.object({
   "extractionId": zod.string(),
   "serviceId": zod.number(),
+  "status": zod.enum(['draft', 'applying', 'applied', 'discarded', 'expired', 'failed']).describe('Lifecycle state of this extraction draft. Only \'draft\' status drafts are actionable by the user.\n'),
   "fields": zod.record(zod.string(), zod.object({
   "value": zod.unknown().optional(),
   "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
 })).describe('Extracted deal fields — all have source=extracted_unconfirmed until the user confirms them.\n'),
   "extractedAt": zod.string(),
+  "expiresAt": zod.string().nullish().describe('ISO timestamp after which this draft expires'),
   "aiDisclosure": zod.string().describe('Human-readable notice that the document was sent to the OpenAI API')
 })
 
@@ -639,11 +639,10 @@ export const ConfirmExtractionDraftParams = zod.object({
 
 export const ConfirmExtractionDraftBody = zod.object({
   "confirmedFields": zod.record(zod.string(), zod.object({
-  "value": zod.unknown().optional(),
-  "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
-})).describe('Fields to save with source=extracted_confirmed. Pass corrected values here — the user\'s edits override AI values.\n'),
-  "deletedFields": zod.array(zod.string()).optional().describe('Field names to remove from current_deals entirely')
-})
+  "value": zod.unknown().optional()
+})).describe('Field name → { value } map. The server assigns source: \"extracted_confirmed\" to each entry. Omit a field here (or add it to deletedFields) to discard it.\n'),
+  "deletedFields": zod.array(zod.string()).optional().describe('Field keys from the extraction draft to discard without confirming')
+}).describe('Confirmation of extracted field values. Do NOT include a \"source\" property in confirmedFields — the server always assigns source: \"extracted_confirmed\".\n')
 
 export const ConfirmExtractionDraftResponse = zod.object({
   "serviceId": zod.number(),
@@ -654,6 +653,39 @@ export const ConfirmExtractionDraftResponse = zod.object({
   "lastConfirmedAt": zod.string().nullish(),
   "updatedAt": zod.string()
 })
+
+
+/**
+ * @summary Get the most recent pending (status=draft) extraction draft for a service, if one exists. Used to restore UI state after page refresh.
+
+ */
+export const GetPendingExtractionDraftParams = zod.object({
+  "id": zod.coerce.number()
+})
+
+export const GetPendingExtractionDraftResponse = zod.union([zod.object({
+  "extractionId": zod.string(),
+  "serviceId": zod.number(),
+  "status": zod.enum(['draft', 'applying', 'applied', 'discarded', 'expired', 'failed']).describe('Lifecycle state of this extraction draft. Only \'draft\' status drafts are actionable by the user.\n'),
+  "fields": zod.record(zod.string(), zod.object({
+  "value": zod.unknown().optional(),
+  "source": zod.enum(['user', 'extracted_confirmed', 'extracted_unconfirmed', 'unknown'])
+})).describe('Extracted deal fields — all have source=extracted_unconfirmed until the user confirms them.\n'),
+  "extractedAt": zod.string(),
+  "expiresAt": zod.string().nullish().describe('ISO timestamp after which this draft expires'),
+  "aiDisclosure": zod.string().describe('Human-readable notice that the document was sent to the OpenAI API')
+}),zod.null()])
+
+
+/**
+ * @summary Discard a pending extraction draft without applying it.
+ */
+export const DiscardExtractionDraftParams = zod.object({
+  "id": zod.coerce.number(),
+  "extractionId": zod.coerce.string()
+})
+
+export const DiscardExtractionDraftResponse = zod.void()
 
 
 /**

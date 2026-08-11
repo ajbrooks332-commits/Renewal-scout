@@ -1410,6 +1410,158 @@ export const useConfirmExtractionDraft = <TError = ErrorType<ErrorResponse>,
       return useMutation(getConfirmExtractionDraftMutationOptions(options));
     }
 
+export const getGetPendingExtractionDraftUrl = (id: number,) => {
+
+
+
+
+  return `/api/services/${id}/extraction-draft/pending`
+}
+
+/**
+ * @summary Get the most recent pending (status=draft) extraction draft for a service, if one exists. Used to restore UI state after page refresh.
+
+ */
+export const getPendingExtractionDraft = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<ExtractionDraft | null> => {
+
+  return customFetch<ExtractionDraft | null>(getGetPendingExtractionDraftUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetPendingExtractionDraftQueryKey = (id: number,) => {
+    return [
+    `/api/services/${id}/extraction-draft/pending`
+    ] as const;
+    }
+
+
+export const getGetPendingExtractionDraftQueryOptions = <TData = Awaited<ReturnType<typeof getPendingExtractionDraft>>, TError = ErrorType<ErrorResponse>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPendingExtractionDraft>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetPendingExtractionDraftQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getPendingExtractionDraft>>> = ({ signal }) => getPendingExtractionDraft(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getPendingExtractionDraft>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetPendingExtractionDraftQueryResult = NonNullable<Awaited<ReturnType<typeof getPendingExtractionDraft>>>
+export type GetPendingExtractionDraftQueryError = ErrorType<ErrorResponse>
+
+
+/**
+ * @summary Get the most recent pending (status=draft) extraction draft for a service, if one exists. Used to restore UI state after page refresh.
+
+ */
+
+export function useGetPendingExtractionDraft<TData = Awaited<ReturnType<typeof getPendingExtractionDraft>>, TError = ErrorType<ErrorResponse>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getPendingExtractionDraft>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetPendingExtractionDraftQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDiscardExtractionDraftUrl = (id: number,
+    extractionId: string,) => {
+
+
+
+
+  return `/api/services/${id}/extraction-draft/${extractionId}/discard`
+}
+
+/**
+ * @summary Discard a pending extraction draft without applying it.
+ */
+export const discardExtractionDraft = async (id: number,
+    extractionId: string, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDiscardExtractionDraftUrl(id,extractionId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getDiscardExtractionDraftMutationOptions = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof discardExtractionDraft>>, TError,{id: number;extractionId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof discardExtractionDraft>>, TError,{id: number;extractionId: string}, TContext> => {
+
+const mutationKey = ['discardExtractionDraft'];
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof discardExtractionDraft>>, {id: number;extractionId: string}> = (props) => {
+          const {id,extractionId} = props ?? {};
+
+          return  discardExtractionDraft(id,extractionId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DiscardExtractionDraftMutationResult = NonNullable<Awaited<ReturnType<typeof discardExtractionDraft>>>
+
+    export type DiscardExtractionDraftMutationError = ErrorType<ErrorResponse>
+
+    /**
+ * @summary Discard a pending extraction draft without applying it.
+ */
+export const useDiscardExtractionDraft = <TError = ErrorType<ErrorResponse>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof discardExtractionDraft>>, TError,{id: number;extractionId: string}, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof discardExtractionDraft>>,
+        TError,
+        {id: number;extractionId: string},
+        TContext
+      > => {
+      return useMutation(getDiscardExtractionDraftMutationOptions(options));
+    }
+
 export const getTriggerResearchUrl = (id: number,) => {
 
 

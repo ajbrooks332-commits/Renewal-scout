@@ -52,11 +52,23 @@ vi.mock("@workspace/db", async (importOriginal) => {
       query: vi.fn().mockResolvedValue({ rows: [] }),
       connect: vi.fn(),
     },
-    db: {
-      select: vi.fn(() => makeChain([])),
-      update: vi.fn(() => makeChain([])),
-      insert: vi.fn(() => makeChain([])),
-    },
+    // db is defined as a const so it can be referenced in transaction's callback
+    db: (() => {
+      const dbMock = {
+        select: vi.fn(() => makeChain([])),
+        update: vi.fn(() => makeChain([])),
+        insert: vi.fn(() => makeChain([])),
+        /**
+         * Transaction mock: calls the callback with the same dbMock object so
+         * that vi.mocked(db.select/update/insert).mockReturnValueOnce() calls
+         * in test bodies work correctly inside transactional routes.
+         */
+        transaction: vi.fn(async (cb: (tx: typeof dbMock) => Promise<unknown>) =>
+          cb(dbMock),
+        ),
+      };
+      return dbMock;
+    })(),
   };
 });
 

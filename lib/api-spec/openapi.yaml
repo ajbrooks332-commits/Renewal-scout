@@ -568,6 +568,79 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
 
+  /services/{id}/extraction-draft/pending:
+    get:
+      operationId: getPendingExtractionDraft
+      tags: [deals]
+      summary: >
+        Get the most recent pending (status=draft) extraction draft for a service,
+        if one exists. Used to restore UI state after page refresh.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+      responses:
+        "200":
+          description: Pending draft or null
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ExtractionDraft"
+                  - type: "null"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Service not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /services/{id}/extraction-draft/{extractionId}/discard:
+    post:
+      operationId: discardExtractionDraft
+      tags: [deals]
+      summary: Discard a pending extraction draft without applying it.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: number
+        - name: extractionId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Draft discarded successfully
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          description: Service or draft not found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "409":
+          description: Draft already applied or discarded
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
   /services/{id}/research:
     post:
       operationId: triggerResearch
@@ -983,13 +1056,25 @@ components:
 
     CurrentDealInput:
       type: object
+      description: >
+        Manual deal update. Clients supply raw field values; the server always
+        assigns source: "user". Clients cannot set provenance directly.
       properties:
-        fields:
+        values:
           type: object
-          additionalProperties:
-            $ref: "#/components/schemas/ProvenanceField"
-      required:
-        - fields
+          description: >
+            Field name → raw value map. Each entry is saved with source: "user".
+            Omit a field to leave its current value unchanged.
+          additionalProperties: {}
+        clear:
+          type: array
+          description: >
+            Field keys whose user-entered values should be removed.
+            Only user-sourced values are removed; extracted_confirmed values
+            are not affected.
+          items:
+            type: string
+      required: []
 
     # ─── Document extraction ────────────────────────────────────────────────────
 
@@ -1000,6 +1085,12 @@ components:
           type: string
         serviceId:
           type: number
+        status:
+          type: string
+          enum: [draft, applying, applied, discarded, expired, failed]
+          description: >
+            Lifecycle state of this extraction draft.
+            Only 'draft' status drafts are actionable by the user.
         fields:
           type: object
           description: >
@@ -1009,31 +1100,40 @@ components:
             $ref: "#/components/schemas/ProvenanceField"
         extractedAt:
           type: string
+        expiresAt:
+          type: ["string", "null"]
+          description: ISO timestamp after which this draft expires
         aiDisclosure:
           type: string
           description: Human-readable notice that the document was sent to the OpenAI API
       required:
         - extractionId
         - serviceId
+        - status
         - fields
         - extractedAt
         - aiDisclosure
 
     ExtractionConfirmInput:
       type: object
+      description: >
+        Confirmation of extracted field values. Do NOT include a "source" property
+        in confirmedFields — the server always assigns source: "extracted_confirmed".
       properties:
         confirmedFields:
           type: object
           description: >
-            Fields to save with source=extracted_confirmed.
-            Pass corrected values here — the user's edits override AI values.
+            Field name → { value } map. The server assigns source: "extracted_confirmed"
+            to each entry. Omit a field here (or add it to deletedFields) to discard it.
           additionalProperties:
-            $ref: "#/components/schemas/ProvenanceField"
+            type: object
+            properties:
+              value: {}
         deletedFields:
           type: array
           items:
             type: string
-          description: Field names to remove from current_deals entirely
+          description: Field keys from the extraction draft to discard without confirming
       required:
         - confirmedFields
 

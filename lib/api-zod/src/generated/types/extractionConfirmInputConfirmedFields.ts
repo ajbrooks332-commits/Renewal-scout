@@ -5,9 +5,10 @@
  * Renewal Scout API
  * OpenAPI spec version: 0.1.0
  */
-import type { ProvenanceField } from './provenanceField';
 
 /**
- * Fields to save with source=extracted_confirmed. Pass corrected values here — the user's edits override AI values.
+ * Field name → { value } map. The server assigns source: "extracted_confirmed" to each entry. Omit a field here (or add it to deletedFields) to discard it.
  */
-export type ExtractionConfirmInputConfirmedFields = {[key: string]: ProvenanceField};
+export type ExtractionConfirmInputConfirmedFields = {[key: string]: {
+  value?: unknown;
+}};

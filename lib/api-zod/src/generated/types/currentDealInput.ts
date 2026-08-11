@@ -5,8 +5,14 @@
  * Renewal Scout API
  * OpenAPI spec version: 0.1.0
  */
-import type { CurrentDealInputFields } from './currentDealInputFields';
+import type { CurrentDealInputValues } from './currentDealInputValues';
 
+/**
+ * Manual deal update. Clients supply raw field values; the server always assigns source: "user". Clients cannot set provenance directly.
+ */
 export interface CurrentDealInput {
-  fields: CurrentDealInputFields;
+  /** Field name → raw value map. Each entry is saved with source: "user". Omit a field to leave its current value unchanged. */
+  values?: CurrentDealInputValues;
+  /** Field keys whose user-entered values should be removed. Only user-sourced values are removed; extracted_confirmed values are not affected. */
+  clear?: string[];
 }
