@@ -33,7 +33,10 @@ const store =
     ? new session.MemoryStore()
     : new PgSession({
         pool,
-        createTableIfMissing: true,
+        // createTableIfMissing is false: migration 0008 owns the table.
+        // connect-pg-simple's bundled DDL uses WITH (OIDS=FALSE) which is
+        // rejected by modern PostgreSQL; the migration avoids that clause.
+        createTableIfMissing: false,
         tableName: "user_sessions",
       });
 

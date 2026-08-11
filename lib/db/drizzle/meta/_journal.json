@@ -57,6 +57,13 @@
       "when": 1786813200000,
       "tag": "0007_reconcile_full_schema",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786899600000,
+      "tag": "0008_create_user_sessions",
+      "breakpoints": true
     }
   ]
 }

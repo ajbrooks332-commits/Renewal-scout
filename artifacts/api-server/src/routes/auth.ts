@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { rateLimit, ipKeyGenerator } from "express-rate-limit";
 import { timingSafeEqual } from "crypto";
 import { LoginBody } from "@workspace/api-zod";
+import { logger } from "../lib/logger.js";
 
 const router: IRouter = Router();
 
@@ -98,6 +99,9 @@ router.post("/auth/login", loginLimiter, (req, res): void => {
   // Regenerate session to prevent session-fixation attacks
   req.session.regenerate((err) => {
     if (err) {
+      // Log the full error server-side for diagnostics.
+      // Never log passwords, cookies, session IDs or secrets.
+      logger.error({ err }, "Session regeneration failed during login");
       res.status(500).json({ error: "Session error during login." });
       return;
     }
