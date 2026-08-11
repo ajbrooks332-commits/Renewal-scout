@@ -43,6 +43,13 @@
       "when": 1786640400000,
       "tag": "0005_extraction_status_draft_fields",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786726800000,
+      "tag": "0006_research_runs_worker_queue",
+      "breakpoints": true
     }
   ]
 }

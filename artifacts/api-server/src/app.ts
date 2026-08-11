@@ -6,7 +6,6 @@ import router from "./routes";
 import { logger } from "./lib/logger";
 import { sessionMiddleware } from "./lib/session";
 import { csrfProtection } from "./lib/csrf";
-import { startScheduler, stopScheduler } from "./lib/scheduler";
 
 const app: Express = express();
 
@@ -38,17 +37,13 @@ app.use(
 );
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
-// In production restrict to an explicit allowlist; in development allow Vite
-// dev origins and the Replit proxy domain (same-origin via proxy).
 const isProduction = process.env["NODE_ENV"] === "production";
 
 function buildCorsOrigin() {
   if (!isProduction) {
-    // Development: allow all origins (Vite dev server, Postman, curl, etc.)
     return true;
   }
 
-  // Production: build allowlist from env vars
   const allowed = new Set<string>();
 
   const corsOriginEnv = process.env["CORS_ORIGIN"];
@@ -100,7 +95,6 @@ app.use(sessionMiddleware);
 app.use("/api", csrfProtection);
 
 // ─── Public source download (no auth, no CSRF) ───────────────────────────────
-// Must be registered BEFORE csrfProtection and the /api router.
 import { readFileSync, existsSync } from "fs";
 
 app.get("/api/download-source", (_req, res) => {
@@ -118,12 +112,16 @@ app.get("/api/download-source", (_req, res) => {
 // API routes
 app.use("/api", router);
 
-// Start daily scheduler on first import
-startScheduler();
-
-// Graceful shutdown
-process.on("SIGTERM", () => {
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Scheduler and worker are started in index.ts (after DB readiness),
+// so we import stop functions lazily on SIGTERM.
+process.on("SIGTERM", async () => {
+  const [{ stopScheduler }, { stopWorker }] = await Promise.all([
+    import("./lib/scheduler"),
+    import("./lib/worker"),
+  ]);
   stopScheduler();
+  stopWorker();
   process.exit(0);
 });
 

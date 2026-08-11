@@ -10,7 +10,6 @@ import {
 import { requireAuth } from "../middlewares/require-auth";
 import {
   queueResearch,
-  executeResearch,
   toApiReport,
   serviceToApi,
 } from "../lib/research-service";
@@ -233,10 +232,10 @@ router.post("/services/:id/research", async (req, res): Promise<void> => {
     return;
   }
 
-  // Fire research in background
-  executeResearch(runId).catch((e) =>
-    req.log.error({ e }, "Background research error"),
-  );
+  // The worker poll loop owns dispatch — do NOT call executeResearch here.
+  // This keeps a clean queue boundary: API queues, worker executes.
+  // The worker polls every WORKER_POLL_INTERVAL_MS (default 10 s) and will
+  // pick up this job shortly. The frontend polls via refetchInterval.
 
   const { researchRunsTable } = await import("@workspace/db");
   const [run] = await db

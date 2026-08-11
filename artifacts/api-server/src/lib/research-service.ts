@@ -18,7 +18,30 @@ import {
 } from "./research-service-schema";
 import type { Service } from "@workspace/db";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+/**
+ * Heartbeat interval: worker updates heartbeat_at while a job is running.
+ * Validated as a finite positive integer; falls back to 30 s on invalid input
+ * so a malformed env var never causes a 1 ms tight-loop update.
+ */
+function parseHeartbeatMs(raw: string | undefined, defaultMs: number): number {
+  const parsed = parseInt(raw ?? "", 10);
+  if (!isFinite(parsed) || parsed <= 0 || parsed > 300_000) {
+    if (raw !== undefined) {
+      logger.warn({ raw, default: defaultMs }, "HEARTBEAT_INTERVAL_MS invalid — using default");
+    }
+    return defaultMs;
+  }
+  return parsed;
+}
+const HEARTBEAT_INTERVAL_MS = parseHeartbeatMs(process.env["HEARTBEAT_INTERVAL_MS"], 30_000);
+
 // ─── Structured output schema (sent to OpenAI) ────────────────────────────────
+//
+// Note: OpenAI strict mode supports a limited JSON Schema subset.
+// Constraints like maxLength/maxItems are enforced post-parse by Zod; they
+// are intentionally omitted here so the schema remains strict-mode compatible.
 
 const REPORT_SCHEMA = {
   type: "object" as const,
@@ -120,7 +143,133 @@ Safety and accuracy rules:
 - Use GBP and UK terminology. State the date of the research.
 - If information is missing, record it in missing_information instead of guessing.
 - comparison_based_on must list every household/deal data point you actually used in your analysis (e.g. "Postcode: SW1A 1AA", "Annual electricity: 3100 kWh"). If you received no household data, say so.
+- Return at most 3 options in the options array.
+- estimated_annual_saving_gbp should be null (the server calculates savings server-side).
 `.trim();
+
+// ─── Per-service profile field allowlists ─────────────────────────────────────
+//
+// Only fields relevant to the service type are included in the research prompt.
+// This prevents, for example, smoker status or vehicle claims history from
+// appearing in a broadband research prompt (irrelevant and a privacy concern).
+
+const PROFILE_ALLOWLIST: Record<string, Set<string>> = {
+  Broadband: new Set(["postcode", "numAdults"]),
+  Electricity: new Set([
+    "postcode", "annualElectricityKwh", "heatingType", "hasEv", "hasSolar",
+  ]),
+  "Gas and electricity": new Set([
+    "postcode", "annualElectricityKwh", "annualGasKwh", "heatingType", "hasEv", "hasSolar",
+  ]),
+  "Car insurance": new Set([
+    "postcode", "carMake", "carModel", "carYear", "annualMileage",
+    "claimsLast5Years", "carValuePence", "drivingExperience", "vehicles",
+  ]),
+  "Home insurance": new Set([
+    "postcode", "propertyType", "tenure", "bedrooms", "numAdults", "yearBuilt",
+  ]),
+  "Life insurance": new Set(["numAdults", "numChildren", "smoker"]),
+  "Mobile phone": new Set(["numAdults"]),
+  "Credit card": new Set([]),
+  "Loan": new Set([]),
+  // Catch-all known service types that need no household context
+  "Other": new Set([]),
+};
+
+/**
+ * Filter a profile record to only the fields relevant for the given service type.
+ *
+ * **Deny-by-default**: unknown service types receive an EMPTY profile rather than
+ * the full household record. This prevents new service types from accidentally
+ * leaking sensitive fields (smoker status, vehicle data, claims history) to
+ * OpenAI before the type is explicitly reviewed and added to PROFILE_ALLOWLIST.
+ *
+ * To permit household data for a new service type, add it to PROFILE_ALLOWLIST
+ * above with the exact set of fields that are relevant and non-sensitive for it.
+ */
+export function filterProfileForService(
+  profile: Record<string, unknown> | null,
+  serviceType: string,
+): Record<string, unknown> | null {
+  if (!profile) return null;
+  // Deny-by-default: unknown types get an empty allowlist (null profile)
+  const allowed = PROFILE_ALLOWLIST[serviceType] ?? new Set<string>();
+  const filtered: Record<string, unknown> = {};
+  for (const key of allowed) {
+    if (profile[key] !== undefined && profile[key] !== null) {
+      filtered[key] = profile[key];
+    }
+  }
+  return Object.keys(filtered).length > 0 ? filtered : null;
+}
+
+// ─── Mandatory server-generated warnings ──────────────────────────────────────
+//
+// These warnings are always prepended to the report's warnings array for the
+// relevant service types. They are not delegated to the model — this ensures
+// they are never omitted regardless of AI output.
+
+const MANDATORY_SERVICE_WARNINGS: Record<string, string> = {
+  "Life insurance":
+    "Life insurance: Always seek regulated financial advice before making changes. " +
+    "Never cancel existing cover before replacement cover is confirmed active.",
+  "Credit card":
+    "Credit cards: Do not submit a full application or trigger a hard credit search " +
+    "before you are ready to proceed. Use soft eligibility checkers first.",
+  "Loan":
+    "Loans: Do not submit a credit application until you have selected a lender. " +
+    "Multiple hard searches can negatively affect your credit score.",
+};
+
+/**
+ * Prepend mandatory server-generated warnings for the given service type.
+ * Idempotent — if the warning is already present it is not duplicated.
+ */
+export function addMandatoryWarnings(report: DealReport, serviceType: string): void {
+  const warning = MANDATORY_SERVICE_WARNINGS[serviceType];
+  if (warning && !report.warnings.includes(warning)) {
+    report.warnings = [warning, ...report.warnings];
+  }
+}
+
+// ─── Server-side savings calculation ─────────────────────────────────────────
+//
+// The AI's estimated_annual_saving_gbp value is DISCARDED and recalculated
+// server-side. Savings are null when:
+//   - The service has no confirmed current cost
+//   - All options require a personalised quote or have unknown costs
+//   - No option is cheaper than the current deal
+
+/**
+ * Compute estimated annual savings based on the current service cost vs
+ * the cheapest comparable (non-personal-quote) option. Returns null when
+ * savings cannot be reliably computed.
+ */
+export function computeSavings(
+  report: DealReport,
+  service: Service,
+): number | null {
+  const currentAnnualCost = effectiveAnnualCost(service);
+  if (currentAnnualCost === null) return null;
+
+  let bestSaving: number | null = null;
+  for (const opt of report.options) {
+    // Skip options that require personal quotes — costs are not publicly confirmed
+    if (
+      opt.price_status === "personal_quote_required" ||
+      opt.price_status === "unavailable"
+    )
+      continue;
+    if (opt.annual_cost_gbp === null || opt.annual_cost_gbp === undefined)
+      continue;
+
+    const saving = currentAnnualCost - opt.annual_cost_gbp;
+    if (saving > 0 && (bestSaving === null || saving > bestSaving)) {
+      bestSaving = saving;
+    }
+  }
+  return bestSaving;
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -172,6 +321,38 @@ function extractCitationUrls(
   return urls;
 }
 
+/**
+ * Reconcile report URLs against Responses API citation annotations.
+ *
+ * When citations are available, every URL in the report is checked against
+ * the annotation set. URLs not backed by an annotation are removed — they
+ * may be fabricated. When no citations are returned (web search produced no
+ * annotation data), the sanitised URLs are kept as-is (fail-open for that
+ * uncommon case rather than stripping all sources).
+ */
+export function reconcileCitationUrls(
+  report: DealReport,
+  citationUrls: string[],
+): DealReport {
+  if (citationUrls.length === 0) {
+    // No annotations: keep all valid sources (could be citation-less search results)
+    return report;
+  }
+
+  const annotationSet = new Set(citationUrls.filter(validUrl));
+
+  // Top-level sources: use the annotation set as the authoritative source list
+  report.sources = [...annotationSet];
+
+  // Option source_urls: only keep those backed by an annotation
+  report.options = report.options.map((opt) => ({
+    ...opt,
+    source_urls: opt.source_urls.filter((url) => annotationSet.has(url)),
+  }));
+
+  return report;
+}
+
 interface ResearchContext {
   profile: Record<string, unknown> | null;
   requirements: Record<string, unknown>;
@@ -182,10 +363,12 @@ interface ResearchContext {
 /**
  * Build the research prompt.
  *
- * When `genericMode` is true, personal household context is omitted and the
- * AI is instructed to return generic public-example results with a disclaimer,
- * rather than personalised comparisons. This is the correct behaviour when the
- * user triggers research despite having incomplete profile/requirements data.
+ * Personalised mode: includes household context filtered to fields relevant for
+ * this service type (per PROFILE_ALLOWLIST). Energy prompts never include
+ * vehicle data; broadband prompts never include smoker status.
+ *
+ * Generic mode: omits personal household context entirely and instructs the AI
+ * to return generic public-example results with a disclaimer.
  */
 function buildPrompt(
   service: Service,
@@ -193,8 +376,6 @@ function buildPrompt(
   genericMode = false,
 ): string {
   if (genericMode) {
-    // Generic mode: no personal data. Return publicly available market examples
-    // with an explicit disclaimer. The user can re-run once their profile is complete.
     const payload = {
       service_type: service.serviceType,
       current_provider: service.provider,
@@ -214,14 +395,14 @@ function buildPrompt(
     );
   }
 
-  // Personalised mode: include full household context.
+  // Personalised mode: include service-type-filtered household context.
   // Only confirmed deal fields (source=user or extracted_confirmed) for research
   const confirmedDealSummary: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(ctx.confirmedDeal)) {
     confirmedDealSummary[k] = (v as { value: unknown }).value;
   }
 
-  // List gaps explicitly
+  // List gaps explicitly for fields relevant to this service type
   const missingGaps: string[] = [];
   const profileFields = [
     "postcode", "propertyType", "tenure", "bedrooms", "numAdults",
@@ -238,7 +419,6 @@ function buildPrompt(
     service_type: service.serviceType,
     current_provider: service.provider,
     current_product: service.productName ?? null,
-    // Convert stored pence to GBP decimal for the research prompt
     monthly_cost_gbp: service.monthlyCostPence !== null && service.monthlyCostPence !== undefined
       ? service.monthlyCostPence / 100 : null,
     annual_cost_gbp: service.annualCostPence !== null && service.annualCostPence !== undefined
@@ -251,6 +431,7 @@ function buildPrompt(
     preferences: service.preferences ?? null,
     non_sensitive_quote_facts: service.quoteFacts ?? null,
     research_date: new Date().toISOString().slice(0, 10),
+    // Profile is filtered to service-relevant fields only
     household_profile: ctx.profile ?? "Not provided",
     service_requirements: Object.keys(ctx.requirements).length > 0 ? ctx.requirements : "Not provided",
     confirmed_current_deal: Object.keys(confirmedDealSummary).length > 0 ? confirmedDealSummary : "Not provided",
@@ -285,9 +466,10 @@ export async function executeResearch(runId: number): Promise<void> {
 
   // ── Atomic claim: only proceed if we can flip queued → running ──────────────
   // This prevents two concurrent callers from both running the same job.
+  const now = new Date();
   const claimed = await db
     .update(researchRunsTable)
-    .set({ status: "running", startedAt: new Date() })
+    .set({ status: "running", startedAt: now, claimedAt: now, heartbeatAt: now })
     .where(
       and(
         eq(researchRunsTable.id, runId),
@@ -302,32 +484,55 @@ export async function executeResearch(runId: number): Promise<void> {
     return;
   }
 
-  // Fetch the run and service after claiming
-  const [run] = await db
-    .select()
-    .from(researchRunsTable)
-    .where(eq(researchRunsTable.id, runId));
-
-  if (!run) return;
-
-  const [service] = await db
-    .select()
-    .from(servicesTable)
-    .where(eq(servicesTable.id, run.serviceId));
-
-  if (!service) {
-    await db
-      .update(researchRunsTable)
-      .set({
-        status: "failed",
-        error: "Service no longer exists.",
-        completedAt: new Date(),
-      })
-      .where(eq(researchRunsTable.id, runId));
-    return;
-  }
+  // ── Start heartbeat and protect ALL post-claim work in a single try/finally ─
+  //
+  // The heartbeat and the run/service fetches are inside the same try/finally
+  // so that ANY transient DB failure — even in the pre-AI context reads — is
+  // caught, logged, and produces a 'failed' status update. Without this, a
+  // crash between the claim and the outer try would leave the run stuck in
+  // 'running' with a live heartbeat that prevents stale-job recovery.
+  const heartbeatHandle = setInterval(async () => {
+    try {
+      await db
+        .update(researchRunsTable)
+        .set({ heartbeatAt: new Date() })
+        .where(eq(researchRunsTable.id, runId));
+    } catch (err) {
+      logger.warn({ err, runId }, "Heartbeat update failed");
+    }
+  }, HEARTBEAT_INTERVAL_MS);
 
   try {
+    // ── Fetch run + service ─────────────────────────────────────────────────
+    // These must be inside try so a DB failure here still clears the heartbeat
+    // and transitions the run to 'failed' rather than leaving it stuck.
+    const [run] = await db
+      .select()
+      .from(researchRunsTable)
+      .where(eq(researchRunsTable.id, runId));
+
+    if (!run) {
+      // Run was deleted immediately after claim — nothing to do
+      return;
+    }
+
+    const [service] = await db
+      .select()
+      .from(servicesTable)
+      .where(eq(servicesTable.id, run.serviceId));
+
+    if (!service) {
+      await db
+        .update(researchRunsTable)
+        .set({
+          status: "failed",
+          error: "Service no longer exists.",
+          completedAt: new Date(),
+        })
+        .where(eq(researchRunsTable.id, runId));
+      return;
+    }
+
     const openai = new OpenAI({ apiKey });
 
     // Fetch household context for the research prompt
@@ -351,29 +556,47 @@ export async function executeResearch(runId: number): Promise<void> {
       }
     }
 
-    const profileData = profile ? { ...profile, id: undefined, createdAt: undefined, updatedAt: undefined, questionnaireVersion: undefined } : null;
+    const rawProfileData = profile
+      ? { ...profile, id: undefined, createdAt: undefined, updatedAt: undefined, questionnaireVersion: undefined }
+      : null;
+
+    // Filter profile to service-relevant fields only — prevents cross-service
+    // data leakage (e.g. smoker status in broadband prompts)
+    const filteredProfile = filterProfileForService(
+      rawProfileData as Record<string, unknown> | null,
+      service.serviceType,
+    );
+
     const reqFields = (reqRow?.fields ?? {}) as Record<string, unknown>;
+    // Use the already-filtered profile so comparison_based_on_hint only
+    // lists fields that are permitted for this service type.
+    // Passing rawProfileData here would leak smoker/vehicle/claims into
+    // broadband, energy, and other unrelated service prompts.
     const comparisonBasedOn = buildComparisonBasedOn(
-      profileData as Record<string, unknown> | null,
+      filteredProfile,
       reqFields,
       dealFields,
       service.serviceType,
     );
 
     const ctx: ResearchContext = {
-      profile: profileData as Record<string, unknown> | null,
+      profile: filteredProfile,
       requirements: reqFields,
       confirmedDeal,
       comparisonBasedOn,
     };
 
     const prompt = buildPrompt(service, ctx, run.genericMode);
-    const model = process.env["OPENAI_MODEL"] ?? "gpt-4o";
+
+    // Model is configurable via env; falls back to gpt-5.6-terra.
+    // In production, OPENAI_MODEL must be set to a valid model name.
+    const model = process.env["OPENAI_MODEL"] ?? "gpt-5.6-terra";
 
     const response = await openai.responses.create({
       model,
       instructions: AGENT_INSTRUCTIONS,
       input: prompt,
+      store: false,        // Do not persist this conversation in OpenAI history
       tools: [{ type: "web_search" }],
       tool_choice: "required",
       text: {
@@ -389,7 +612,7 @@ export async function executeResearch(runId: number): Promise<void> {
     const outputText = response.output_text;
     if (!outputText) throw new Error("No output from AI response.");
 
-    // Parse and validate at runtime with Zod
+    // Parse and validate at runtime with Zod (enforces maxLength, finite costs, etc.)
     let parsed: unknown;
     try {
       parsed = JSON.parse(outputText);
@@ -405,16 +628,25 @@ export async function executeResearch(runId: number): Promise<void> {
     }
 
     let report: DealReport = validated.data;
+
+    // Sanitise URLs (filter non-http, deduplicate)
     report = sanitiseReport(report);
 
-    // Extract and merge URL citations from response output annotations
+    // Citation reconciliation: URLs not backed by a Responses API annotation
+    // are removed. If no annotations were returned, keep sanitised sources.
     const outputItems = (
       response.output as unknown as Array<Record<string, unknown>>
     ) ?? [];
     const citationUrls = extractCitationUrls(outputItems);
-    report.sources = [
-      ...new Set([...report.sources, ...citationUrls.filter(validUrl)]),
-    ];
+    report = reconcileCitationUrls(report, citationUrls);
+
+    // Server-side savings calculation — overrides AI value which is discarded.
+    // Returns null when personalised quotes are required or no current cost.
+    report.estimated_annual_saving_gbp = computeSavings(report, service);
+
+    // Prepend mandatory warnings for regulated/risky service types.
+    // These are not delegated to the model to ensure they are never omitted.
+    addMandatoryWarnings(report, service.serviceType);
 
     const nextResearchAt = calculateNextResearchDate(service);
 
@@ -427,11 +659,12 @@ export async function executeResearch(runId: number): Promise<void> {
       })
       .where(eq(researchRunsTable.id, runId));
 
+    // Only update nextResearchAt when we have a valid future date
     await db
       .update(servicesTable)
       .set({
         lastResearchedAt: new Date(),
-        ...(nextResearchAt ? { nextResearchAt } : {}),
+        nextResearchAt: nextResearchAt ?? null,
       })
       .where(eq(servicesTable.id, service.id));
 
@@ -446,17 +679,41 @@ export async function executeResearch(runId: number): Promise<void> {
       logger.warn({ err, runId }, "Failed to send research complete email"),
     );
   } catch (err) {
-    const error =
-      err instanceof Error ? err.message : "Unknown error during research";
-    logger.error({ runId, error }, "Research failed");
-    await db
-      .update(researchRunsTable)
-      .set({
-        status: "failed",
-        error: error.slice(0, 2000),
-        completedAt: new Date(),
-      })
-      .where(eq(researchRunsTable.id, runId));
+    // Sanitise: log the error type + request ID but never expose raw AI error text.
+    // User-facing error is generic; internal log has detail.
+    const isOpenAIError = err && typeof err === "object" && "status" in err;
+    const safeError = isOpenAIError
+      ? `AI service error (type: ${(err as Record<string,unknown>)["type"] ?? "unknown"}, ` +
+        `request_id: ${(err as Record<string,unknown>)["request_id"] ?? "n/a"})`
+      : err instanceof Error
+        ? err.message
+        : "Unknown error during research";
+
+    logger.error({ runId, errorType: err instanceof Error ? err.constructor.name : typeof err },
+      "Research failed");
+
+    // Best-effort status update — log if this also fails but don't rethrow
+    // (the finally block still clears the heartbeat so recovery can pick it up)
+    try {
+      await db
+        .update(researchRunsTable)
+        .set({
+          status: "failed",
+          error: safeError.slice(0, 2000),
+          completedAt: new Date(),
+        })
+        .where(eq(researchRunsTable.id, runId));
+    } catch (updateErr) {
+      logger.error(
+        { updateErr, runId },
+        "Research: could not write failed status — stale-job recovery will clean up",
+      );
+    }
+  } finally {
+    // Always clear the heartbeat so recovery can detect a stale job if the
+    // status update above also fails. Without this, the heartbeat would keep
+    // refreshing heartbeat_at and prevent stale-job detection forever.
+    clearInterval(heartbeatHandle);
   }
 }
 
@@ -479,7 +736,6 @@ export async function queueResearch(
   if (!service) throw new Error("Service not found or archived.");
 
   // Application-level guard (works even if the DB index is unavailable).
-  // Reduces the window for duplicates under concurrent callers.
   const existing = await db
     .select()
     .from(researchRunsTable)
@@ -493,18 +749,16 @@ export async function queueResearch(
 
   if (existing.length > 0) return existing[0].id;
 
-  // DB-level guard: ON CONFLICT DO NOTHING uses the partial unique index to
-  // collapse any race that slipped past the application-level check above.
+  const queuedAt = new Date();
   const inserted = await db
     .insert(researchRunsTable)
-    .values({ serviceId, trigger, genericMode, status: "queued" })
+    .values({ serviceId, trigger, genericMode, status: "queued", queuedAt })
     .onConflictDoNothing()
     .returning();
 
   if (inserted.length > 0) return inserted[0].id;
 
-  // The insert was a no-op (DB conflict) — the winner was inserted between our
-  // select and insert.  Fetch and return the active run.
+  // The insert was a no-op (DB conflict) — fetch the active winner.
   const [winner] = await db
     .select()
     .from(researchRunsTable)
@@ -518,17 +772,19 @@ export async function queueResearch(
 
   if (winner) return winner.id;
 
-  // Extremely unlikely: the conflicting run completed in the tiny window
-  // between our failed insert and this fetch.  Retry without a conflict guard.
-  // genericMode must be preserved here — a request made as generic must not
-  // silently become personalised through this fallback path.
+  // Extremely unlikely: the conflicting run completed in the tiny window.
   const [retry] = await db
     .insert(researchRunsTable)
-    .values({ serviceId, trigger, genericMode, status: "queued" })
+    .values({ serviceId, trigger, genericMode, status: "queued", queuedAt })
     .returning();
   return retry.id;
 }
 
+/**
+ * Scan for services due for research and queue them.
+ * Does NOT execute jobs — the worker polls and picks them up.
+ * Past target dates do not trigger research (needsResearch guards this).
+ */
 export async function scanDueServices(): Promise<number[]> {
   const services = await db
     .select()
@@ -547,9 +803,7 @@ export async function scanDueServices(): Promise<number[]> {
   for (const service of dueServices) {
     const runId = await queueResearch(service.id, "scheduled");
     runIds.push(runId);
-    executeResearch(runId).catch((err) =>
-      logger.error({ err, runId }, "Background research failed"),
-    );
+    // Execution is handled by the worker poll loop — do NOT fire-and-forget here.
   }
   return runIds;
 }
@@ -596,7 +850,6 @@ export function serviceToApi(service: Service): Record<string, unknown> {
     serviceType: service.serviceType,
     provider: service.provider,
     productName: service.productName ?? null,
-    // Pence → GBP decimal for API consumers
     monthlyCostGbp: service.monthlyCostPence !== null && service.monthlyCostPence !== undefined
       ? service.monthlyCostPence / 100 : null,
     annualCostGbp: service.annualCostPence !== null && service.annualCostPence !== undefined

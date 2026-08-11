@@ -19,9 +19,12 @@ const loginLimiter = rateLimit({
   keyGenerator: (req) => ipKeyGenerator(req.ip ?? "unknown"),
 });
 
+/**
+ * Strict SCHEDULER_ENABLED check: only the case-insensitive string "true"
+ * enables the scheduler. "1", "yes", unset, or any other value returns false.
+ */
 function isSchedulerEnabled(): boolean {
-  const val = process.env["SCHEDULER_ENABLED"];
-  return !!val && val !== "false";
+  return (process.env["SCHEDULER_ENABLED"] ?? "").toLowerCase() === "true";
 }
 
 function getSetupWarnings(): string[] {

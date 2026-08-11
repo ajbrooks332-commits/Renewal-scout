@@ -41,6 +41,21 @@ export const researchRunsTable = pgTable(
       .defaultNow(),
     startedAt: timestamp("started_at", { withTimezone: true }),
     completedAt: timestamp("completed_at", { withTimezone: true }),
+    // ─── PG-backed worker queue fields ───────────────────────────────────────
+    /** Explicitly set when the job is queued (equals createdAt for new rows). */
+    queuedAt: timestamp("queued_at", { withTimezone: true }),
+    /** Set atomically when a worker claims the job (queued → running). */
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    /**
+     * Periodic heartbeat timestamp set by the worker while the job is running.
+     * Stale values (older than STALE_HEARTBEAT_MS) indicate an abandoned job
+     * that should be recovered and requeued.
+     */
+    heartbeatAt: timestamp("heartbeat_at", { withTimezone: true }),
+    /** How many times this job has been retried after failure. */
+    retryCount: integer("retry_count").notNull().default(0),
+    /** Maximum allowed retries before the job is permanently failed. */
+    maxRetries: integer("max_retries").notNull().default(2),
   },
   (table) => [
     check(

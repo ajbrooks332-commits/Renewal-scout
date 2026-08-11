@@ -14,7 +14,7 @@ import {
   AlertTriangle, CheckSquare, Info, FileText, ChevronDown, Clock,
   Settings, CreditCard, XCircle, Loader2
 } from "lucide-react";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { ServiceRequirementsTab } from "@/pages/service-requirements-tab";
 import { CurrentDealTab } from "@/pages/current-deal-tab";
@@ -190,6 +190,17 @@ export default function ServiceDetailPage() {
   };
 
   const isResearching = runs.some(r => r.status === "queued" || r.status === "running");
+
+  // Poll every 5 s while a research run is queued or running.
+  // Stops automatically when the run completes, so idle pages do not poll.
+  useEffect(() => {
+    if (!isResearching) return;
+    const timer = setInterval(() => {
+      queryClient.invalidateQueries({ queryKey: getGetServiceQueryKey(id) });
+    }, 5000);
+    return () => clearInterval(timer);
+  }, [isResearching, id, queryClient]);
+
   const showGate = !genericMode && completenessReport && (completenessReport.blocking || completenessReport.recommended.length > 0);
 
   return (
