@@ -163,21 +163,6 @@ app.use(sessionMiddleware);
 // ─── CSRF / Origin validation on all mutation routes ──────────────────────────
 app.use("/api", csrfProtection);
 
-// ─── Public source download (no auth, no CSRF) ───────────────────────────────
-import { readFileSync, existsSync } from "fs";
-
-app.get("/api/download-source", (_req, res) => {
-  const filePath = "/home/runner/workspace/renewal-scout-export.txt";
-  if (!existsSync(filePath)) {
-    res.status(404).send("Source export not found.");
-    return;
-  }
-  const content = readFileSync(filePath, "utf8");
-  res.setHeader("Content-Type", "text/plain; charset=utf-8");
-  res.setHeader("Content-Disposition", 'attachment; filename="renewal-scout-source.txt"');
-  res.send(content);
-});
-
 // ─── API routes ───────────────────────────────────────────────────────────────
 app.use("/api", router);
 
@@ -207,19 +192,6 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
       : "An internal server error occurred. Please try again later.";
 
   res.status(status).json({ error: message });
-});
-
-// ─── Graceful shutdown ────────────────────────────────────────────────────────
-// Scheduler and worker are started in index.ts (after DB readiness),
-// so we import stop functions lazily on SIGTERM.
-process.on("SIGTERM", async () => {
-  const [{ stopScheduler }, { stopWorker }] = await Promise.all([
-    import("./lib/scheduler"),
-    import("./lib/worker"),
-  ]);
-  stopScheduler();
-  stopWorker();
-  process.exit(0);
 });
 
 export default app;

@@ -1246,39 +1246,28 @@ describe("POST /api/services/:id/extract-document — MIME hardening", () => {
 // ─── Task #12: Schema-strict PUT — unknown field names rejected ────────────────
 
 describe("PUT /api/services/:id/current-deal — schema strictness", () => {
-  it("ignores unknown field names (only schema-declared fields are persisted)", async () => {
-    // Zod strips keys not in the service-type schema; the route iterates
-    // coercedValues so arbitrary field names cannot be stored.
+  it("rejects unknown field names with HTTP 400 (strict schema)", async () => {
+    // The deal schemas use .strict() — unknown keys submitted in `values` cause
+    // validateDealValues() to return an error, and the route responds with 400.
+    // This prevents arbitrary or misspelled field names from being stored.
     const { db } = await import("@workspace/db");
     vi.mocked(db.select)
       .mockReturnValueOnce(makeChain([{ id: 1, serviceType: "Broadband" }]))
       .mockReturnValueOnce(makeChain([])); // no existing deal
-
-    let insertedFields: unknown = null;
-    vi.mocked(db.insert).mockReturnValueOnce({
-      values: vi.fn().mockImplementation((v: { fields: unknown }) => {
-        insertedFields = v.fields;
-        return makeChain([{
-          serviceId: 1, fields: v.fields, lastConfirmedAt: null, updatedAt: new Date(),
-        }]);
-      }),
-    } as never);
 
     const res = await request(app)
       .put("/api/services/1/current-deal")
       .set("Cookie", authCookie)
       .send({
         values: {
-          provider: "BT",              // valid — in BroadbandDeal schema
-          arbitraryHackedField: "HACK", // NOT a declared field — must be dropped
+          provider: "BT",               // valid — in BroadbandDeal schema
+          arbitraryHackedField: "HACK",  // NOT a declared field — must be rejected
         },
       });
 
-    expect(res.status).toBe(200);
-    const stored = insertedFields as Record<string, { value: unknown; source: string }>;
-    expect(stored["provider"]?.value).toBe("BT");
-    // Unknown field must be absent from the stored deal
-    expect(stored["arbitraryHackedField"]).toBeUndefined();
+    // Strict schema: unknown keys cause a 400, not a silent strip
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/validation/i);
   });
 
   it("stores numeric string values as numbers (coercion persisted)", async () => {

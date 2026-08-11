@@ -1,0 +1,7 @@
+- [Deal schema validation](deal-schema-validation.md) — All deal schemas use .strict(); unknown keys → HTTP 400 (not silent strip); task5.test.ts updated to match
+- [Citation reconciliation fail-closed](citation-fail-closed.md) — reconcileCitationUrls() clears all URLs when citationUrls.length===0; task13 test updated to match new behavior
+- [Worker await pattern](worker-await.md) — executeResearch is awaited in pollAndExecute; pollInProgress stays true for job's full duration; stopWorker() is async with 30s bounded timeout
+- [Graceful shutdown pattern](graceful-shutdown.md) — index.ts keeps server reference; SIGTERM+SIGINT with idempotent shuttingDown flag; sequence: server.close → stopScheduler → await stopWorker(30000) → pool.end → exit(0)
+- [Integration test isolation](integration-test-isolation.md) — schema.integration.test.ts requires TEST_DATABASE_URL ≠ DATABASE_URL + ALLOW_DESTRUCTIVE_DB_TESTS=true; uses separate pg.Pool(testPool) for all raw SQL
+- [Service requirements showWhen](service-requirements-showwhen.md) — FieldDef.showWhen gates visibility on sibling field value; used for Sky TV detail fields (linkedSkyTv) and EV fields (evOwner); server KNOWN_FIELDS must also include new fields or save will 400
+- [computeSavings deal-cost priority](compute-savings-deal-cost.md) — effectiveAnnualCostWithDeal() prefers deal annualCostGbp/annualPremiumGbp → monthlyCostGbp×12 → service pence cols; only user/extracted_confirmed provenance used

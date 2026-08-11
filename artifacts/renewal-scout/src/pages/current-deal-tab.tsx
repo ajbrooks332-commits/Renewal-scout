@@ -44,30 +44,46 @@ interface FieldEntry {
 }
 
 const FIELD_DEFS: FieldEntry[] = [
-  { key: "provider", label: "Provider", type: "text" },
-  { key: "tariffName", label: "Tariff / product name", type: "text" },
-  { key: "productName", label: "Product name", type: "text" },
-  { key: "monthlyCostGbp", label: "Monthly cost (£)", type: "number", placeholder: "e.g. 45.99" },
-  { key: "annualCostGbp", label: "Annual cost (£)", type: "number" },
-  { key: "annualPremiumGbp", label: "Annual premium (£)", type: "number" },
-  { key: "renewalDate", label: "Renewal date", type: "date" },
-  { key: "contractEndDate", label: "Contract end date", type: "date" },
-  { key: "exitFeeGbp", label: "Exit / cancellation fee (£)", type: "number" },
-  { key: "setupFeeGbp", label: "Setup fee (£)", type: "number" },
-  { key: "noticeDays", label: "Notice period (days)", type: "number" },
-  { key: "unitRatePencePkwh", label: "Unit rate (p/kWh)", type: "number" },
-  { key: "standingChargePencePday", label: "Standing charge (p/day)", type: "number" },
-  { key: "gasUnitRatePencePkwh", label: "Gas unit rate (p/kWh)", type: "number" },
-  { key: "gasStandingChargePencePday", label: "Gas standing charge (p/day)", type: "number" },
-  { key: "downloadSpeedMbps", label: "Download speed (Mbps)", type: "number" },
-  { key: "uploadSpeedMbps", label: "Upload speed (Mbps)", type: "number" },
-  { key: "coverType", label: "Cover type", type: "text" },
-  { key: "excessGbp", label: "Excess (£)", type: "number" },
-  { key: "aprPct", label: "APR (%)", type: "number" },
-  { key: "balanceGbp", label: "Balance (£)", type: "number" },
-  { key: "inclusions", label: "What's included", type: "text" },
-  { key: "exclusions", label: "Key exclusions", type: "text" },
-  { key: "notes", label: "Other notes", type: "text" },
+  // ── Universal fields ────────────────────────────────────────────────────────
+  { key: "provider",             label: "Provider",                         type: "text" },
+  { key: "tariffName",           label: "Tariff / product name",            type: "text" },
+  { key: "productName",          label: "Product name",                     type: "text" },
+  { key: "monthlyCostGbp",       label: "Monthly cost (£)",                 type: "number", placeholder: "e.g. 45.99" },
+  { key: "annualCostGbp",        label: "Annual cost (£)",                  type: "number" },
+  { key: "annualPremiumGbp",     label: "Annual premium (£)",               type: "number" },
+  { key: "renewalDate",          label: "Renewal date",                     type: "date" },
+  { key: "contractEndDate",      label: "Contract end date",                type: "date" },
+  { key: "exitFeeGbp",           label: "Exit / cancellation fee (£)",      type: "number" },
+  { key: "setupFeeGbp",          label: "Setup fee (£)",                    type: "number" },
+  { key: "noticeDays",           label: "Notice period (days)",             type: "number" },
+  { key: "promotionEndDate",     label: "Promotional rate end date",        type: "date" },
+  { key: "priceIncreasePct",     label: "Annual price increase clause (%)", type: "number", placeholder: "e.g. 3.9" },
+  { key: "paymentMethod",        label: "Payment method",                   type: "text",   placeholder: "e.g. Direct Debit" },
+  // ── Bundle / package fields ─────────────────────────────────────────────────
+  { key: "bundleProducts",       label: "Bundled products",                 type: "text",   placeholder: "e.g. Sky Sports + Netflix" },
+  { key: "bundleDiscount",       label: "Bundle discount",                  type: "text",   placeholder: "e.g. £10/month" },
+  { key: "bundleTerms",          label: "Bundle terms",                     type: "text",   placeholder: "e.g. 18-month min, unlimited data" },
+  // ── Energy-specific ─────────────────────────────────────────────────────────
+  { key: "unitRatePencePkwh",         label: "Unit rate (p/kWh)",          type: "number" },
+  { key: "standingChargePencePday",   label: "Standing charge (p/day)",    type: "number" },
+  { key: "gasUnitRatePencePkwh",      label: "Gas unit rate (p/kWh)",      type: "number" },
+  { key: "gasStandingChargePencePday",label: "Gas standing charge (p/day)",type: "number" },
+  // ── Broadband-specific ──────────────────────────────────────────────────────
+  { key: "downloadSpeedMbps",    label: "Download speed (Mbps)",            type: "number" },
+  { key: "uploadSpeedMbps",      label: "Upload speed (Mbps)",              type: "number" },
+  // ── Insurance-specific ──────────────────────────────────────────────────────
+  { key: "coverType",            label: "Cover type",                       type: "text" },
+  { key: "excessGbp",            label: "Excess (£)",                       type: "number" },
+  { key: "addOns",               label: "Optional add-ons / extras",        type: "text" },
+  // ── Credit / loan-specific ──────────────────────────────────────────────────
+  { key: "aprPct",               label: "APR (%)",                          type: "number" },
+  { key: "balanceGbp",           label: "Outstanding balance (£)",          type: "number" },
+  { key: "arrangementFeeGbp",    label: "Arrangement / processing fee (£)", type: "number" },
+  { key: "promoExpiryDate",      label: "Promotional rate expiry date",     type: "date" },
+  // ── Free-text summary fields ────────────────────────────────────────────────
+  { key: "inclusions",           label: "What's included",                  type: "text" },
+  { key: "exclusions",           label: "Key exclusions",                   type: "text" },
+  { key: "notes",                label: "Other notes",                      type: "text" },
 ];
 
 const SOURCE_BADGE: Record<Source, { label: string; className: string }> = {
@@ -335,8 +351,10 @@ function ExtractionConfirmScreen({
         <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0 text-amber-600" />
         <div>
           <strong>Review all extracted values before confirming.</strong>{" "}
-          This document was processed by the OpenAI API. Document bytes were not retained
-          by Renewal Scout or OpenAI. Edit any incorrect values, then click Confirm.
+          This document was processed by the OpenAI API. Renewal Scout did not retain the
+          raw document after processing. OpenAI may retain API content temporarily in
+          abuse-monitoring logs under your OpenAI account data controls.
+          Edit any incorrect values, then click Confirm.
           Only confirmed fields are used in research comparisons.
         </div>
       </div>
@@ -528,9 +546,11 @@ export function CurrentDealTab({ serviceId }: { serviceId: number }) {
             <ShieldAlert className="h-3.5 w-3.5 shrink-0 mt-0.5 text-amber-500" />
             <span>
               <strong className="text-foreground">AI disclosure:</strong>{" "}
-              Your document will be sent to the OpenAI API for text extraction.
-              Renewal Scout sets <code>store: false</code> so OpenAI does not retain the
-              document content. No document bytes are stored by Renewal Scout.
+              This document will be sent to the OpenAI API for field extraction.
+              Renewal Scout does not retain the raw document after processing.
+              The API request uses <code>store:false</code>, which disables normal
+              Responses application-state storage. OpenAI may still retain API content
+              temporarily in abuse-monitoring logs under your OpenAI account data controls.
               Review all extracted values carefully — AI extraction may contain errors.
             </span>
           </div>

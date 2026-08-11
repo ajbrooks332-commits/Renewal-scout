@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
-# Generates renewal-scout-source.txt — a complete plain-text export of all
+# Generates REVIEW_EXPORT.txt — a complete plain-text export of all
 # source files needed to understand, audit, or reproduce the project.
 #
 # Excludes: node_modules, .git, build output (dist/), .env*, coverage, the
-# export file itself, the ZIP, secrets, lock files above pnpm-lock.yaml.
+# export file itself, the ZIP, secrets, lock files above pnpm-lock.yaml,
+# and any obsolete generated HTML files (download pages etc.).
 #
 # Usage: bash scripts/generate-export.sh [output-path]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-OUTPUT="${1:-$ROOT/renewal-scout-export.txt}"
+OUTPUT="${1:-$ROOT/REVIEW_EXPORT.txt}"
 
 echo "# RENEWAL SCOUT — FULL SOURCE EXPORT" > "$OUTPUT"
 echo "# Generated: $(date -u)" >> "$OUTPUT"
@@ -26,21 +27,11 @@ append_file() {
   echo "" >> "$OUTPUT"
 }
 
-# ─── Helper: append all files matching a glob pattern ────────────────────────
-append_glob() {
-  local pattern="$1"
-  # Use find to expand glob safely
-  while IFS= read -r -d '' file; do
-    append_file "$file"
-  done < <(find $ROOT/$pattern -maxdepth 0 -type f -print0 2>/dev/null || true)
-}
-
 append_dir() {
   local dir="$ROOT/$1"
-  local exts="${2:-ts,tsx,js,mjs,json,sql,yaml,toml,md}"
   if [ ! -d "$dir" ]; then return; fi
   while IFS= read -r -d '' file; do
-    # Skip node_modules, dist, .git, coverage
+    # Skip node_modules, dist, .git, coverage, turbo cache
     case "$file" in
       */node_modules/*|*/.git/*|*/dist/*|*/coverage/*|*/.turbo/*) continue ;;
     esac
@@ -59,6 +50,7 @@ for f in \
   pnpm-workspace.yaml \
   package.json \
   tsconfig.json \
+  tsconfig.base.json \
   pnpm-lock.yaml \
   .replit \
   artifact.toml \

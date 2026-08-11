@@ -1,7 +1,7 @@
 import { useEffect } from "react";
 import { useLocation, Link } from "wouter";
 import { useGetMe, useLogout } from "@workspace/api-client-react";
-import { Shield, ShieldAlert, LayoutDashboard, Plus, LogOut, Loader2, Home, Download } from "lucide-react";
+import { Shield, ShieldAlert, LayoutDashboard, Plus, LogOut, Loader2, Home } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function AppLayout({ children }: { children: React.ReactNode }) {
@@ -54,15 +54,6 @@ export function AppLayout({ children }: { children: React.ReactNode }) {
         </nav>
 
         <div className="p-4 border-t border-border space-y-2">
-          <a
-            href="/renewal-scout/download-code.html"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-3 px-3 py-2 text-sm font-medium rounded-md text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors w-full"
-          >
-            <Download className="h-4 w-4" />
-            Download Source
-          </a>
           <Button 
             variant="ghost" 
             className="w-full justify-start text-sidebar-foreground" 

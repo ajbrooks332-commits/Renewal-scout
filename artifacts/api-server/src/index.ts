@@ -1,9 +1,9 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { recoverStaleJobs, ensureActiveRunIndex } from "./lib/stale-jobs";
-import { startScheduler } from "./lib/scheduler";
-import { startWorker } from "./lib/worker";
-import { runMigrations } from "@workspace/db";
+import { startScheduler, stopScheduler } from "./lib/scheduler";
+import { startWorker, stopWorker } from "./lib/worker";
+import { runMigrations, pool } from "@workspace/db";
 
 const rawPort = process.env["PORT"];
 
@@ -92,6 +92,48 @@ try {
 startScheduler();
 startWorker();
 
-app.listen(port, () => {
+// ── HTTP server ───────────────────────────────────────────────────────────────
+// Keep the server reference so we can call server.close() in shutdown.
+const server = app.listen(port, () => {
   logger.info({ port }, "Server listening");
 });
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Handles both SIGTERM (systemd/container stop) and SIGINT (Ctrl-C / dev).
+// Sequence:
+//   1. Stop accepting new HTTP connections
+//   2. Stop background services (scheduler stops immediately; worker awaits job)
+//   3. Close the PostgreSQL pool
+//   4. Exit cleanly
+//
+// The shutdown is idempotent — a second signal while already shutting down
+// is ignored so the process doesn't exit mid-cleanup.
+
+let shuttingDown = false;
+
+async function gracefulShutdown(signal: string): Promise<void> {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  logger.info({ signal }, "Shutdown signal received — beginning graceful shutdown");
+
+  // Stop accepting new HTTP requests (existing connections are drained)
+  server.close();
+
+  // Stop background services
+  stopScheduler();
+  await stopWorker(30_000).catch((err) =>
+    logger.warn({ err }, "Worker shutdown warning — continuing"),
+  );
+
+  // Close the PostgreSQL connection pool
+  await pool.end().catch((err) =>
+    logger.warn({ err }, "Pool close warning — continuing"),
+  );
+
+  logger.info("Graceful shutdown complete");
+  process.exit(0);
+}
+
+process.on("SIGTERM", () => { void gracefulShutdown("SIGTERM"); });
+process.on("SIGINT",  () => { void gracefulShutdown("SIGINT"); });

@@ -326,13 +326,18 @@ describe("reconcileCitationUrls — citation URL reconciliation", () => {
     expect(result.options[0].source_urls).toEqual(["https://bt.com/offer"]);
   });
 
-  it("keeps all valid sources when no citations returned (fail-open)", () => {
+  it("clears all source URLs when no citations returned (fail-closed)", () => {
+    // When the Responses API returns no citation annotations, the function must
+    // fail closed — URLs cannot be verified so they are removed to prevent
+    // serving hallucinated links. A warning is prepended to report.warnings.
     const report = makeBaseReport({
       sources: ["https://bt.com/broadband", "https://sky.com/broadband"],
     });
     const result = reconcileCitationUrls(report, []); // empty citations
-    expect(result.sources).toContain("https://bt.com/broadband");
-    expect(result.sources).toContain("https://sky.com/broadband");
+    // All source URLs cleared — cannot verify provenance
+    expect(result.sources).toHaveLength(0);
+    // Warning added so callers know why sources are empty
+    expect(result.warnings.some((w) => w.includes("could not be verified"))).toBe(true);
   });
 
   it("uses citation set as the definitive sources list (not merged with report sources)", () => {

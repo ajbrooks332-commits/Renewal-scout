@@ -10,6 +10,11 @@
  * unknownFields: local set of field keys the user has explicitly toggled as
  * "I don't know". Sent to the API so the UI can restore toggle state even if
  * the value is null for another reason.
+ *
+ * showWhen: optional condition on a FieldDef that hides a question until a
+ * sibling field equals a specific value. Used to progressively disclose
+ * detail questions (e.g. Sky TV package details only when linkedSkyTv=true,
+ * EV details only when evOwner=true).
  */
 import { useState, useEffect } from "react";
 import { useGetServiceRequirements, useUpdateServiceRequirements } from "@workspace/api-client-react";
@@ -23,7 +28,7 @@ import { Save, Loader2 } from "lucide-react";
 
 // ─── Question definitions per service type ─────────────────────────────────────
 
-type FieldType = "number" | "select" | "boolean";
+type FieldType = "number" | "select" | "boolean" | "text";
 
 interface FieldDef {
   key: string;
@@ -34,6 +39,12 @@ interface FieldDef {
   min?: number;
   max?: number;
   placeholder?: string;
+  /**
+   * When present, this question is only shown when `localFields[showWhen.field]`
+   * equals `showWhen.value` exactly. Used for progressive disclosure of detail
+   * questions (e.g. Sky TV sub-questions, EV detail fields).
+   */
+  showWhen?: { field: string; value: unknown };
 }
 
 const QUESTIONS: Record<string, FieldDef[]> = {
@@ -59,9 +70,32 @@ const QUESTIONS: Record<string, FieldDef[]> = {
     { key: "maxMonthlyBudgetGbp",  label: "Maximum monthly budget (£)",    type: "number", placeholder: "e.g. 35", min: 0 },
     { key: "linkedSkyTv",          label: "Do you already have a Sky TV subscription?", type: "boolean",
       hint: "If yes, you may be eligible for bundle pricing." },
+    // Sky TV detail questions — shown only when linkedSkyTv = true
+    { key: "skyTvPackage",         label: "Current Sky TV package",         type: "select",
+      showWhen: { field: "linkedSkyTv", value: true },
+      options: [
+        { value: "sky_q",      label: "Sky Q" },
+        { value: "sky_glass",  label: "Sky Glass" },
+        { value: "sky_stream", label: "Sky Stream" },
+        { value: "sky_basic",  label: "Sky Basic / Now TV box" },
+      ]
+    },
+    { key: "skyTvSportsRequired",  label: "Must keep Sky Sports?",          type: "boolean",
+      showWhen: { field: "linkedSkyTv", value: true },
+      hint: "Affects whether bundle providers must include a sports add-on." },
+    { key: "skyTvCinemaRequired",  label: "Must keep Sky Cinema?",          type: "boolean",
+      showWhen: { field: "linkedSkyTv", value: true } },
     { key: "linkedSkyMobile",      label: "Do you already have Sky Mobile?",  type: "boolean" },
+    // Sky Mobile detail — shown only when linkedSkyMobile = true
+    { key: "skyMobileLines",       label: "Number of Sky Mobile SIM / phone lines", type: "number",
+      showWhen: { field: "linkedSkyMobile", value: true },
+      placeholder: "e.g. 2", min: 1 },
     { key: "linkedVirginMedia",    label: "Do you already have Virgin Media?", type: "boolean" },
     { key: "bundleDiscountImportant", label: "Is a bundle discount important to you?", type: "boolean" },
+    // Bundle discount detail — shown when bundleDiscountImportant = true
+    { key: "currentBundleDiscountGbp", label: "Current bundle discount (£/month, if known)", type: "number",
+      showWhen: { field: "bundleDiscountImportant", value: true },
+      placeholder: "e.g. 10", min: 0 },
     { key: "willingToSplitBundle", label: "Would you consider splitting broadband from your TV bundle?", type: "boolean" },
     { key: "tvAddon",              label: "Want a TV add-on?",             type: "boolean" },
     { key: "homePhoneAddon",       label: "Want a home phone add-on?",     type: "boolean" },
@@ -97,11 +131,30 @@ const QUESTIONS: Record<string, FieldDef[]> = {
       ]
     },
     { key: "dayNightSplit",     label: "Do you use Economy 7 / day-night tariff?",  type: "boolean" },
-    // EV-specific
+    // ── EV ownership gate ─────────────────────────────────────────────────────
+    { key: "evOwner",           label: "Do you have an electric or plug-in hybrid vehicle (EV/PHEV)?", type: "boolean",
+      hint: "Enables EV-specific tariff comparisons (off-peak charging, EV tariffs)." },
+    // EV detail questions — only shown when evOwner = true
+    { key: "evMake",            label: "EV make (e.g. Tesla, Volkswagen, Nissan)",  type: "text",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. Tesla" },
+    { key: "evModel",           label: "EV model (e.g. Model 3, Leaf, e-Golf)",     type: "text",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. Model 3" },
+    { key: "evBatteryCapacityKwh", label: "EV battery capacity (kWh)",              type: "number",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. 75", min: 0 },
+    { key: "evAnnualMileage",   label: "Estimated annual EV mileage",               type: "number",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. 10000", min: 0 },
     { key: "shiftToOffPeak",    label: "Willing to shift EV charging to off-peak hours?", type: "boolean",
+      showWhen: { field: "evOwner", value: true },
       hint: "Off-peak tariffs can significantly reduce EV charging costs." },
-    { key: "homeChargerKw",     label: "Home EV charger power (kW)",                type: "number", placeholder: "e.g. 7", min: 0 },
+    { key: "homeChargerKw",     label: "Home EV charger power (kW)",                type: "number",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. 7", min: 0 },
     { key: "overnightChargingStart", label: "Preferred overnight charging start",   type: "select",
+      showWhen: { field: "evOwner", value: true },
       hint: "Used to match you to off-peak tariff windows.",
       options: [
         { value: "21:00", label: "9 pm" }, { value: "22:00", label: "10 pm" },
@@ -109,8 +162,22 @@ const QUESTIONS: Record<string, FieldDef[]> = {
         { value: "01:00", label: "1 am" },
       ]
     },
-    // Solar / home battery
+    { key: "overnightChargingEnd", label: "Preferred overnight charging end",       type: "select",
+      showWhen: { field: "evOwner", value: true },
+      options: [
+        { value: "04:00", label: "4 am" }, { value: "05:00", label: "5 am" },
+        { value: "06:00", label: "6 am" }, { value: "07:00", label: "7 am" },
+        { value: "08:00", label: "8 am" },
+      ]
+    },
+    { key: "dayUsagePercent",   label: "Approximate % of electricity used during the day (6am–11pm)", type: "number",
+      showWhen: { field: "evOwner", value: true },
+      hint: "Helps assess whether a day/night split tariff would save money.",
+      placeholder: "e.g. 70", min: 0, max: 100 },
+    // ── Solar / home battery ──────────────────────────────────────────────────
     { key: "solarPanels",       label: "Do you have solar panels?",                 type: "boolean" },
+    { key: "solarExportTariff", label: "Do you have a solar export (SEG) tariff?",  type: "boolean",
+      hint: "Affects which suppliers are optimal for solar owners." },
     { key: "homeBattery",       label: "Do you have a home battery (e.g. Powerwall)?", type: "boolean" },
     { key: "homeBatteryCapacityKwh", label: "Home battery capacity (kWh)",          type: "number", placeholder: "e.g. 10", min: 0 },
   ],
@@ -142,9 +209,50 @@ const QUESTIONS: Record<string, FieldDef[]> = {
         { value: "any",          label: "No preference" },
       ]
     },
-    { key: "shiftToOffPeak",    label: "Willing to shift EV charging to off-peak hours?", type: "boolean" },
-    { key: "homeChargerKw",     label: "Home EV charger power (kW)",                type: "number", placeholder: "e.g. 7", min: 0 },
+    { key: "dayNightSplit",     label: "Do you use Economy 7 / day-night tariff?",  type: "boolean" },
+    // ── EV ownership gate ─────────────────────────────────────────────────────
+    { key: "evOwner",           label: "Do you have an electric or plug-in hybrid vehicle (EV/PHEV)?", type: "boolean",
+      hint: "Enables EV-specific tariff comparisons." },
+    // EV detail questions — only shown when evOwner = true
+    { key: "evMake",            label: "EV make (e.g. Tesla, Volkswagen, Nissan)",  type: "text",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. Tesla" },
+    { key: "evModel",           label: "EV model (e.g. Model 3, Leaf, e-Golf)",     type: "text",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. Model 3" },
+    { key: "evBatteryCapacityKwh", label: "EV battery capacity (kWh)",              type: "number",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. 75", min: 0 },
+    { key: "evAnnualMileage",   label: "Estimated annual EV mileage",               type: "number",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. 10000", min: 0 },
+    { key: "shiftToOffPeak",    label: "Willing to shift EV charging to off-peak hours?", type: "boolean",
+      showWhen: { field: "evOwner", value: true } },
+    { key: "homeChargerKw",     label: "Home EV charger power (kW)",                type: "number",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. 7", min: 0 },
+    { key: "overnightChargingStart", label: "Preferred overnight charging start",   type: "select",
+      showWhen: { field: "evOwner", value: true },
+      options: [
+        { value: "21:00", label: "9 pm" }, { value: "22:00", label: "10 pm" },
+        { value: "23:00", label: "11 pm" }, { value: "00:00", label: "Midnight" },
+        { value: "01:00", label: "1 am" },
+      ]
+    },
+    { key: "overnightChargingEnd", label: "Preferred overnight charging end",       type: "select",
+      showWhen: { field: "evOwner", value: true },
+      options: [
+        { value: "04:00", label: "4 am" }, { value: "05:00", label: "5 am" },
+        { value: "06:00", label: "6 am" }, { value: "07:00", label: "7 am" },
+        { value: "08:00", label: "8 am" },
+      ]
+    },
+    { key: "dayUsagePercent",   label: "Approximate % of electricity used during the day (6am–11pm)", type: "number",
+      showWhen: { field: "evOwner", value: true },
+      placeholder: "e.g. 70", min: 0, max: 100 },
+    // ── Solar / home battery ──────────────────────────────────────────────────
     { key: "solarPanels",       label: "Do you have solar panels?",                 type: "boolean" },
+    { key: "solarExportTariff", label: "Do you have a solar export (SEG) tariff?",  type: "boolean" },
     { key: "homeBattery",       label: "Do you have a home battery?",               type: "boolean" },
     { key: "homeBatteryCapacityKwh", label: "Home battery capacity (kWh)",          type: "number", placeholder: "e.g. 10", min: 0 },
   ],
@@ -169,84 +277,72 @@ const QUESTIONS: Record<string, FieldDef[]> = {
     { key: "voluntaryExcessGbp", label: "Preferred voluntary excess (£)", type: "number", placeholder: "e.g. 250" },
     { key: "useType", label: "Vehicle use", type: "select",
       options: [
-        { value: "social",     label: "Social, domestic & pleasure only" },
-        { value: "commuting",  label: "Social + commuting" },
-        { value: "business",   label: "Business use" },
+        { value: "social",         label: "Social / domestic / pleasure" },
+        { value: "social_commute", label: "Social + commuting" },
+        { value: "business",       label: "Business use" },
       ]
     },
+    { key: "noClaimsYears",   label: "No-claims bonus (years)", type: "number", placeholder: "e.g. 5", min: 0, max: 30 },
+    { key: "addBreakdownCover", label: "Include breakdown cover?", type: "boolean" },
+    { key: "addLegalExpenses",  label: "Include legal expenses cover?", type: "boolean" },
+    { key: "addCourtesy",       label: "Include courtesy car?", type: "boolean" },
+    { key: "maxAnnualBudgetGbp", label: "Maximum annual premium (£)", type: "number", placeholder: "e.g. 600", min: 0 },
   ],
 
   // ── Home insurance ────────────────────────────────────────────────────────
   "Home insurance": [
-    { key: "coverType", label: "Cover needed", type: "select",
+    { key: "coverType", label: "Cover type", type: "select",
       options: [
         { value: "buildings_and_contents", label: "Buildings & contents" },
-        { value: "buildings_only",         label: "Buildings only" },
-        { value: "contents_only",          label: "Contents only" },
+        { value: "buildings",              label: "Buildings only" },
+        { value: "contents",               label: "Contents only" },
       ]
     },
     { key: "voluntaryExcessGbp", label: "Preferred voluntary excess (£)", type: "number", placeholder: "e.g. 250" },
-    { key: "highValueItems",     label: "High-value items (jewellery, art, etc.) to specify?", type: "boolean" },
-    { key: "floodRisk",          label: "Is the property in a flood risk area?",             type: "boolean" },
+    { key: "addAccidentalDamage",  label: "Include accidental damage cover?", type: "boolean" },
+    { key: "addPersonalPossessions", label: "Include personal possessions (away from home)?", type: "boolean" },
+    { key: "addLegalExpenses",     label: "Include legal expenses cover?",    type: "boolean" },
+    { key: "contentsValueGbp",     label: "Estimated contents value (£)",     type: "number", placeholder: "e.g. 30000", min: 0 },
+    { key: "maxAnnualBudgetGbp",   label: "Maximum annual premium (£)",       type: "number", placeholder: "e.g. 400", min: 0 },
   ],
 
   // ── Life insurance ────────────────────────────────────────────────────────
   "Life insurance": [
-    { key: "coverType", label: "Cover type", type: "select",
+    { key: "coverType", label: "Policy type", type: "select",
       options: [
-        { value: "level_term",      label: "Level term" },
-        { value: "decreasing_term", label: "Decreasing term" },
-        { value: "whole_of_life",   label: "Whole of life" },
+        { value: "level_term",     label: "Level term" },
+        { value: "decreasing_term",label: "Decreasing term (e.g. mortgage)" },
+        { value: "whole_of_life",  label: "Whole of life" },
+        { value: "joint",          label: "Joint policy" },
       ]
     },
-    { key: "termYears",           label: "Cover term (years)", type: "number", placeholder: "e.g. 25", min: 1, max: 50 },
-    { key: "jointPolicy",         label: "Joint policy?",                      type: "boolean" },
-    { key: "criticalIllnessCover", label: "Include critical illness cover?",   type: "boolean" },
+    { key: "coverAmountGbp",    label: "Required cover amount (£)",   type: "number", placeholder: "e.g. 250000", min: 0 },
+    { key: "termYears",         label: "Required term (years)",        type: "number", placeholder: "e.g. 25", min: 1, max: 50 },
+    { key: "criticalIllness",   label: "Include critical illness cover?", type: "boolean" },
+    { key: "indexLinked",       label: "Should the policy be index-linked?", type: "boolean" },
+    { key: "maxAnnualBudgetGbp",label: "Maximum annual premium (£)",  type: "number", placeholder: "e.g. 300", min: 0 },
   ],
 
-  // ── Credit card ───────────────────────────────────────────────────────────
-  "Credit card": [
-    { key: "primaryUse", label: "Primary use", type: "select",
-      options: [
-        { value: "purchases",         label: "Everyday purchases" },
-        { value: "balance_transfer",  label: "Balance transfer" },
-        { value: "travel",            label: "Travel rewards" },
-        { value: "cashback",          label: "Cashback" },
-      ]
-    },
-    { key: "balanceTransfer", label: "Planning a balance transfer?", type: "boolean" },
-  ],
-
-  // ── Loan ──────────────────────────────────────────────────────────────────
-  Loan: [
-    { key: "purposeOfLoan", label: "Loan purpose", type: "select",
-      options: [
-        { value: "home_improvement",   label: "Home improvement" },
-        { value: "car",                label: "Car" },
-        { value: "debt_consolidation", label: "Debt consolidation" },
-        { value: "other",              label: "Other" },
-      ]
-    },
-    { key: "amountGbp",   label: "Loan amount (£)",          type: "number", placeholder: "e.g. 10000" },
-    { key: "termMonths",  label: "Preferred term (months)",  type: "number", placeholder: "e.g. 36" },
-  ],
-
-  // ── Mobile phone ─────────────────────────────────────────────────────────
+  // ── Mobile phone ──────────────────────────────────────────────────────────
   "Mobile phone": [
-    { key: "dataGb",          label: "Minimum data per month (GB)",  type: "number", placeholder: "e.g. 10" },
-    { key: "includesHandset", label: "Include new handset in the deal?", type: "boolean" },
-    { key: "contractMonths",  label: "Contract length (months)", type: "select",
+    { key: "monthlyDataGb",    label: "Monthly data needed (GB)",    type: "number", placeholder: "e.g. 20", min: 0 },
+    { key: "unlimitedData",    label: "Need unlimited data?",         type: "boolean" },
+    { key: "roamingEu",        label: "Must include EU roaming?",     type: "boolean" },
+    { key: "roamingWorld",     label: "Must include worldwide roaming?", type: "boolean" },
+    { key: "sim_only",         label: "SIM-only deal (no new handset)?", type: "boolean" },
+    { key: "maxContractMonths",label: "Maximum contract length (months)", type: "select",
       options: [
-        { value: "12",      label: "12 months" },
-        { value: "24",      label: "24 months" },
-        { value: "rolling", label: "Rolling (SIM-only)" },
+        { value: "1",   label: "1 month (rolling)" },
+        { value: "12",  label: "12 months" },
+        { value: "24",  label: "24 months" },
+        { value: "any", label: "No preference" },
       ]
     },
-    { key: "roamingNeeded",   label: "Regular EU/international roaming needed?", type: "boolean" },
+    { key: "maxMonthlyBudgetGbp", label: "Maximum monthly budget (£)", type: "number", placeholder: "e.g. 20", min: 0 },
   ],
 };
 
-// ─── Field input components ────────────────────────────────────────────────────
+// ─── Boolean field component ──────────────────────────────────────────────────
 
 function BoolField({
   value,
@@ -255,28 +351,49 @@ function BoolField({
 }: {
   value: boolean | null;
   onChange: (v: boolean | null) => void;
-  onExplicitUnknown?: (unknown: boolean) => void;
+  onExplicitUnknown: (isUnknown: boolean) => void;
 }) {
+  const isUnknown = value === null;
   return (
-    <Select
-      value={value === null ? "__unknown__" : value ? "yes" : "no"}
-      onValueChange={(v) => {
-        const isUnknown = v === "__unknown__";
-        onChange(isUnknown ? null : v === "yes");
-        onExplicitUnknown?.(isUnknown);
-      }}
-    >
-      <SelectTrigger><SelectValue /></SelectTrigger>
-      <SelectContent>
-        <SelectItem value="__unknown__">I don't know</SelectItem>
-        <SelectItem value="yes">Yes</SelectItem>
-        <SelectItem value="no">No</SelectItem>
-      </SelectContent>
-    </Select>
+    <div className="flex flex-wrap gap-2 items-center">
+      <button
+        type="button"
+        onClick={() => { onChange(true); onExplicitUnknown(false); }}
+        className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
+          value === true
+            ? "bg-primary text-primary-foreground border-primary"
+            : "bg-background text-foreground border-border hover:bg-muted"
+        }`}
+      >
+        Yes
+      </button>
+      <button
+        type="button"
+        onClick={() => { onChange(false); onExplicitUnknown(false); }}
+        className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
+          value === false
+            ? "bg-primary text-primary-foreground border-primary"
+            : "bg-background text-foreground border-border hover:bg-muted"
+        }`}
+      >
+        No
+      </button>
+      <button
+        type="button"
+        onClick={() => { onChange(null); onExplicitUnknown(true); }}
+        className={`px-3 py-1.5 rounded-md text-sm border transition-colors ${
+          isUnknown
+            ? "bg-muted text-muted-foreground border-border"
+            : "bg-background text-muted-foreground border-border hover:bg-muted"
+        }`}
+      >
+        I don't know
+      </button>
+    </div>
   );
 }
 
-// ─── Main component ────────────────────────────────────────────────────────────
+// ─── Main component ───────────────────────────────────────────────────────────
 
 export function ServiceRequirementsTab({
   serviceId,
@@ -375,6 +492,14 @@ export function ServiceRequirementsTab({
         </CardHeader>
         <CardContent className="space-y-5">
           {questions.map((q) => {
+            // Progressive disclosure: skip questions whose gate condition is not met.
+            // The gate checks the current local value (not saved), so flipping the
+            // gate field in the UI immediately shows/hides dependant questions.
+            if (q.showWhen !== undefined) {
+              const gateValue = localFields[q.showWhen.field];
+              if (gateValue !== q.showWhen.value) return null;
+            }
+
             const value = localFields[q.key] ?? null;
             return (
               <div key={q.key}>
@@ -410,6 +535,15 @@ export function ServiceRequirementsTab({
                         ))}
                       </SelectContent>
                     </Select>
+                  ) : q.type === "text" ? (
+                    <Input
+                      type="text"
+                      placeholder={q.placeholder ?? "Leave blank if unknown"}
+                      value={(value as string | null) ?? ""}
+                      onChange={(e) =>
+                        setField(q.key, e.target.value === "" ? null : e.target.value)
+                      }
+                    />
                   ) : (
                     <Input
                       type="number"

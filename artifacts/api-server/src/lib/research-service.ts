@@ -241,15 +241,58 @@ export function addMandatoryWarnings(report: DealReport, serviceType: string): v
 //   - No option is cheaper than the current deal
 
 /**
+ * Derive the effective annual cost in GBP from confirmed deal fields.
+ *
+ * Priority order (first non-null value wins):
+ *   1. annualCostGbp from deal (user or extracted_confirmed provenance)
+ *   2. annualPremiumGbp from deal (insurance equivalent)
+ *   3. monthlyCostGbp × 12 from deal
+ *   4. Legacy integer-pence columns on the service record (fallback)
+ *
+ * Only fields with source "user" or "extracted_confirmed" are used —
+ * unconfirmed AI extractions are never trusted for financial calculations.
+ */
+function effectiveAnnualCostWithDeal(
+  service: Service,
+  dealFields?: Record<string, { value: unknown; source: string }>,
+): number | null {
+  if (dealFields) {
+    const isConfirmed = (pf: { value: unknown; source: string }) =>
+      pf.source === "user" || pf.source === "extracted_confirmed";
+
+    const tryGbp = (key: string): number | null => {
+      const pf = dealFields[key];
+      if (!pf || !isConfirmed(pf)) return null;
+      const v = pf.value;
+      if (typeof v === "number" && isFinite(v) && v >= 0) return v;
+      return null;
+    };
+
+    const annual = tryGbp("annualCostGbp") ?? tryGbp("annualPremiumGbp");
+    if (annual !== null) return annual;
+
+    const monthly = tryGbp("monthlyCostGbp");
+    if (monthly !== null) return monthly * 12;
+  }
+  // Fall back to the service record's integer-pence columns
+  return effectiveAnnualCost(service);
+}
+
+/**
  * Compute estimated annual savings based on the current service cost vs
  * the cheapest comparable (non-personal-quote) option. Returns null when
  * savings cannot be reliably computed.
+ *
+ * @param confirmedDealFields - All deal fields with provenance. Only fields
+ *   with source "user" or "extracted_confirmed" contribute to the cost
+ *   calculation. Passing undefined falls back to service pence columns.
  */
 export function computeSavings(
   report: DealReport,
   service: Service,
+  confirmedDealFields?: Record<string, { value: unknown; source: string }>,
 ): number | null {
-  const currentAnnualCost = effectiveAnnualCost(service);
+  const currentAnnualCost = effectiveAnnualCostWithDeal(service, confirmedDealFields);
   if (currentAnnualCost === null) return null;
 
   let bestSaving: number | null = null;
@@ -326,16 +369,27 @@ function extractCitationUrls(
  *
  * When citations are available, every URL in the report is checked against
  * the annotation set. URLs not backed by an annotation are removed — they
- * may be fabricated. When no citations are returned (web search produced no
- * annotation data), the sanitised URLs are kept as-is (fail-open for that
- * uncommon case rather than stripping all sources).
+ * may be fabricated.
+ *
+ * When no citations are returned (web search returned no annotation data),
+ * the function FAILS CLOSED: all source URLs are cleared and a warning is
+ * prepended so downstream consumers know citations could not be verified.
+ * Keeping unverified model-generated URLs open risks displaying hallucinated
+ * links as if they were real sources.
  */
 export function reconcileCitationUrls(
   report: DealReport,
   citationUrls: string[],
 ): DealReport {
   if (citationUrls.length === 0) {
-    // No annotations: keep all valid sources (could be citation-less search results)
+    // No citation annotations returned — fail closed. Clear all source URLs
+    // rather than serving potentially fabricated links to the user.
+    report.sources = [];
+    report.options = report.options.map((opt) => ({ ...opt, source_urls: [] }));
+    const citationWarning = "Source URLs could not be verified against search citations — links have been removed.";
+    if (!report.warnings.includes(citationWarning)) {
+      report.warnings = [citationWarning, ...report.warnings];
+    }
     return report;
   }
 
@@ -533,7 +587,14 @@ export async function executeResearch(runId: number): Promise<void> {
       return;
     }
 
-    const openai = new OpenAI({ apiKey });
+    const openai = new OpenAI({
+      apiKey,
+      // Limit SDK-level retries to 2 so we never multiply retries with
+      // any external retry logic. The 45 s timeout per attempt prevents
+      // a single slow request from stalling the job indefinitely.
+      maxRetries: 2,
+      timeout: 45_000,
+    });
 
     // Fetch household context for the research prompt
     const [profile] = await db.select().from(householdProfileTable).limit(1);
@@ -641,8 +702,9 @@ export async function executeResearch(runId: number): Promise<void> {
     report = reconcileCitationUrls(report, citationUrls);
 
     // Server-side savings calculation — overrides AI value which is discarded.
-    // Returns null when personalised quotes are required or no current cost.
-    report.estimated_annual_saving_gbp = computeSavings(report, service);
+    // Pass the full dealFields so computeSavings can prefer confirmed deal
+    // costs (annualCostGbp, monthlyCostGbp) over the legacy pence columns.
+    report.estimated_annual_saving_gbp = computeSavings(report, service, dealFields);
 
     // Prepend mandatory warnings for regulated/risky service types.
     // These are not delegated to the model to ensure they are never omitted.
@@ -650,23 +712,30 @@ export async function executeResearch(runId: number): Promise<void> {
 
     const nextResearchAt = calculateNextResearchDate(service);
 
-    await db
-      .update(researchRunsTable)
-      .set({
-        status: "complete",
-        reportJson: JSON.stringify(report),
-        completedAt: new Date(),
-      })
-      .where(eq(researchRunsTable.id, runId));
+    // Persist completion atomically — both the run status and the service
+    // scheduling fields must update together. A half-written state (e.g. run
+    // marked complete but nextResearchAt not updated) would cause duplicate
+    // research triggers or missing scheduling data.
+    const now = new Date();
+    await db.transaction(async (tx) => {
+      await tx
+        .update(researchRunsTable)
+        .set({
+          status: "complete",
+          reportJson: JSON.stringify(report),
+          completedAt: now,
+        })
+        .where(eq(researchRunsTable.id, runId));
 
-    // Only update nextResearchAt when we have a valid future date
-    await db
-      .update(servicesTable)
-      .set({
-        lastResearchedAt: new Date(),
-        nextResearchAt: nextResearchAt ?? null,
-      })
-      .where(eq(servicesTable.id, service.id));
+      // Only update nextResearchAt when we have a valid future date
+      await tx
+        .update(servicesTable)
+        .set({
+          lastResearchedAt: now,
+          nextResearchAt: nextResearchAt ?? null,
+        })
+        .where(eq(servicesTable.id, service.id));
+    });
 
     logger.info({ runId, serviceId: service.id }, "Research completed");
 
@@ -679,15 +748,16 @@ export async function executeResearch(runId: number): Promise<void> {
       logger.warn({ err, runId }, "Failed to send research complete email"),
     );
   } catch (err) {
-    // Sanitise: log the error type + request ID but never expose raw AI error text.
-    // User-facing error is generic; internal log has detail.
+    // Sanitise: log the real error internally but never expose it to users.
+    // For OpenAI errors, include the public-safe type + request_id so operators
+    // can correlate with OpenAI dashboard. All other errors get a generic
+    // message — raw err.message may contain internal paths, DB state, or
+    // other implementation details that must not reach the database or UI.
     const isOpenAIError = err && typeof err === "object" && "status" in err;
     const safeError = isOpenAIError
       ? `AI service error (type: ${(err as Record<string,unknown>)["type"] ?? "unknown"}, ` +
         `request_id: ${(err as Record<string,unknown>)["request_id"] ?? "n/a"})`
-      : err instanceof Error
-        ? err.message
-        : "Unknown error during research";
+      : "Research could not be completed. Please try again later.";
 
     logger.error({ runId, errorType: err instanceof Error ? err.constructor.name : typeof err },
       "Research failed");

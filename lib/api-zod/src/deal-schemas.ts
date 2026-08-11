@@ -112,30 +112,46 @@ const CreditLoanDeal = CommonDeal.extend({
   promoExpiryDate: OptDate,
 });
 
+// ── Strict variants — reject any unknown keys submitted by clients ─────────────
+//
+// These are used for validation at the API boundary so clients cannot sneak in
+// undeclared field names. Using .strict() on each schema (rather than the base
+// CommonDeal) ensures the extended schemas correctly reject keys beyond their
+// own declared set.
+//
+// NOTE: CommonDeal.extend({...}).strict() call ordering matters in Zod — calling
+// .strict() on the *extended* result (not on CommonDeal itself) ensures the
+// strict flag covers both the base and extension fields.
+const EnergyDealStrict = EnergyDeal.strict();
+const BroadbandDealStrict = BroadbandDeal.strict();
+const InsuranceDealStrict = InsuranceDeal.strict();
+const CreditLoanDealStrict = CreditLoanDeal.strict();
+const CommonDealStrict = CommonDeal.strict();
+
 // ── Per-service-type schema map ────────────────────────────────────────────────
 
 // Keys MUST match the canonical SERVICE_TYPES list in lib/api-zod/src/primitives.ts.
 // Any service type not listed here falls back to CommonDeal via getDealSchema().
 export const DEAL_SCHEMAS_BY_SERVICE_TYPE: Record<string, z.ZodTypeAny> = {
   // Energy — single fuel (electricity) or combined (gas & electricity)
-  Electricity: EnergyDeal,
-  "Gas and electricity": EnergyDeal,
+  Electricity: EnergyDealStrict,
+  "Gas and electricity": EnergyDealStrict,
   // Broadband
-  Broadband: BroadbandDeal,
+  Broadband: BroadbandDealStrict,
   // Insurance
-  "Car insurance": InsuranceDeal,
-  "Home insurance": InsuranceDeal,
-  "Life insurance": InsuranceDeal,
+  "Car insurance": InsuranceDealStrict,
+  "Home insurance": InsuranceDealStrict,
+  "Life insurance": InsuranceDealStrict,
   // Credit / Loan
-  "Credit card": CreditLoanDeal,
-  Loan: CreditLoanDeal,
+  "Credit card": CreditLoanDealStrict,
+  Loan: CreditLoanDealStrict,
   // Common fallback — service types that have no extra fields
-  "Mobile phone": CommonDeal,
-  Other: CommonDeal,
+  "Mobile phone": CommonDealStrict,
+  Other: CommonDealStrict,
 };
 
 /** Fallback schema when the service type is unknown */
-export const FALLBACK_DEAL_SCHEMA = CommonDeal;
+export const FALLBACK_DEAL_SCHEMA = CommonDealStrict;
 
 /**
  * Returns the deal schema for a given service type.

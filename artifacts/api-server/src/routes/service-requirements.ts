@@ -40,6 +40,12 @@ export const KNOWN_FIELDS: Record<string, string[]> = {
     "linkedVirginMedia",
     "bundleDiscountImportant",
     "willingToSplitBundle",
+    // Sky bundle details — shown when linkedSkyTv or linkedSkyMobile is true
+    "skyTvPackage",
+    "skyTvSportsRequired",
+    "skyTvCinemaRequired",
+    "skyMobileLines",
+    "currentBundleDiscountGbp",
     // Legacy / still supported
     "contractLengthMonths",
     "includesLineRental",
@@ -61,7 +67,9 @@ export const KNOWN_FIELDS: Record<string, string[]> = {
     // Smart meter
     "smartMeter",
     "smartMeterType",    // SMETS1 | SMETS2 | none
-    // EV-specific energy requirements
+    // EV ownership gate — used to conditionally show EV detail questions in UI
+    "evOwner",
+    // EV-specific energy requirements (shown when evOwner=true)
     "evMake",
     "evModel",
     "evBatteryCapacityKwh",
@@ -89,6 +97,9 @@ export const KNOWN_FIELDS: Record<string, string[]> = {
     "dayUsagePercent",
     "smartMeter",
     "smartMeterType",
+    // EV ownership gate
+    "evOwner",
+    // EV-specific (shown when evOwner=true)
     "evMake",
     "evModel",
     "evBatteryCapacityKwh",
@@ -225,23 +236,41 @@ router.put("/services/:id/requirements", async (req, res): Promise<void> => {
     return;
   }
 
-  // Filter to known fields for this service type.
-  // Unknown field names are silently discarded (extensible — only body keys
-  // are strictly validated above). Key presence (even with null value) is
-  // preserved because null = "I don't know" (not missing).
+  // Validate all field names against the service-type allowlist.
+  // Unknown field names are REJECTED with HTTP 400 (not silently discarded)
+  // to surface client bugs and prevent cross-service field leakage.
+  // Key presence with null value is preserved: null = "I don't know".
   const allowed = new Set(KNOWN_FIELDS[service.serviceType] ?? []);
-  const filtered: Record<string, unknown> = {};
-  for (const key of Object.keys(parsed.data.fields)) {
-    if (allowed.has(key)) {
-      filtered[key] = parsed.data.fields[key]; // null = "I don't know"
-    }
+
+  const unknownKeys = Object.keys(parsed.data.fields).filter(
+    (k) => !allowed.has(k),
+  );
+  if (unknownKeys.length > 0) {
+    res.status(400).json({
+      error:
+        `Unknown field name(s) for service type "${service.serviceType}": ` +
+        `${unknownKeys.map((k) => JSON.stringify(k)).join(", ")}. ` +
+        `Permitted fields: ${[...allowed].sort().join(", ")}`,
+    });
+    return;
   }
 
+  const filtered = { ...parsed.data.fields };
+
   // unknownFields: array of field names the user explicitly marked as unknown.
-  // Filter to only known fields to avoid storing junk.
-  const unknownFields = (parsed.data.unknownFields ?? []).filter((k) =>
-    allowed.has(k),
+  // Reject any that are not in the allowlist.
+  const badUnknownFields = (parsed.data.unknownFields ?? []).filter(
+    (k) => !allowed.has(k),
   );
+  if (badUnknownFields.length > 0) {
+    res.status(400).json({
+      error:
+        `Unknown field name(s) in unknownFields for service type "${service.serviceType}": ` +
+        `${badUnknownFields.map((k) => JSON.stringify(k)).join(", ")}`,
+    });
+    return;
+  }
+  const unknownFields = parsed.data.unknownFields ?? [];
 
   const [existing] = await db
     .select()

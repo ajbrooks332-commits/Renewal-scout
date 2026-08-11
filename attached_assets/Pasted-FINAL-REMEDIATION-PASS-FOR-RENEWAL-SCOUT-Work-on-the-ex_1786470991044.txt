@@ -1,0 +1,234 @@
+FINAL REMEDIATION PASS FOR RENEWAL SCOUT
+
+Work on the existing application. Do not rewrite it and do not discard working functionality or existing database data.
+
+Do not publish the application until every task below is completed and the verification report has been generated.
+
+1. REMOVE ALL PUBLIC SOURCE-CODE DOWNLOADS
+
+This is a publish-blocking security issue.
+
+* In `artifacts/api-server/src/app.ts`, completely remove `/api/download-source`.
+* Remove the `readFileSync` and `existsSync` imports.
+* Delete:
+
+  * `artifacts/renewal-scout/public/download-code.html`
+  * `artifacts/renewal-scout/public/download.html`
+* In `artifacts/renewal-scout/src/components/layout.tsx`, remove the Download Source link and unused Download icon.
+* Ensure no source export, ZIP, embedded source string or build report is copied into the production static directory.
+* Source exports may only be generated manually into the project root or a private artifacts folder.
+* Add tests proving unauthenticated and authenticated requests to `/api/download-source` return 404.
+* Add a build check proving `dist/public` contains no source-download pages or source exports.
+
+2. STOP USING `drizzle-kit push`
+
+* Remove `pnpm --filter db push` from `scripts/post-merge.sh`.
+* The post-merge script should install dependencies only.
+* Production startup’s `runMigrations()` must remain the only canonical database upgrade path.
+* Do not use `drizzle-kit push`, `push-force`, schema resets, journal seeding or manual journal deletion in deployment workflows.
+
+Create a new migration, for example `0007_reconcile_partial_schema.sql`. Do not rely on editing migration 0002 because it may already be recorded as applied.
+
+Migration 0007 must:
+
+* Reconcile every table and every column declared by the current Drizzle schema using safe conditional DDL.
+* Add missing columns with safe backfills before applying NOT NULL constraints.
+* Safely handle old GBP columns and current pence columns, including the case where both exist.
+* Never multiply an already-converted pence value by 100 again.
+* Before applying the household singleton constraint:
+
+  * If exactly one profile exists with an ID other than 1, safely change it to ID 1.
+  * If multiple profiles exist, stop with a clear diagnostic. Never silently delete or merge household data.
+* Detect duplicate rows before adding unique constraints and fail with a clear diagnostic instead of deleting data.
+* Remain idempotent.
+
+3. ISOLATE DATABASE INTEGRATION TESTS
+
+`schema.integration.test.ts` currently clears migration-journal rows. It must never be permitted to run against the live application database.
+
+* Require `TEST_DATABASE_URL`.
+* Refuse to start if `TEST_DATABASE_URL` is absent.
+* Refuse to start if it equals `DATABASE_URL`.
+* Add an additional explicit guard such as `ALLOW_DESTRUCTIVE_DB_TESTS=true`.
+* Use only a disposable test database.
+* Test both:
+
+  * Fresh migration from an empty database.
+  * Simulated push-provisioned/partially provisioned upgrade.
+* Never clear the production migration journal.
+
+4. IMPLEMENT STRICT, SERVICE-SPECIFIC REQUIREMENT VALIDATION
+
+The current requirements endpoint accepts `Record<string, unknown>` and silently discards unknown fields. Replace this with versioned, service-specific strict Zod schemas.
+
+For every service category:
+
+* Reject unknown field names with HTTP 400.
+* Validate booleans as actual booleans.
+* Validate numbers as finite and within sensible ranges.
+* Validate integers where required.
+* Validate enums and times such as `HH:MM`.
+* Validate text length.
+* Permit `null` only where it represents an explicit “I don’t know”.
+* Ensure `unknownFields` contains only recognised keys whose submitted value is null.
+* Parse the saved requirements through the service-specific schema again before including them in an OpenAI prompt.
+
+Apply the same strictness to current-deal schemas:
+
+* Make CommonDeal and all extended deal schemas `.strict()`.
+* Make `UpdateDealBodySchema` and `ConfirmBodySchema` `.strict()`.
+* Reject every client-submitted `source` property, regardless of its value.
+* Never silently strip an invalid or cross-service field.
+
+Add positive and negative tests for every service category.
+
+5. COMPLETE THE QUESTIONNAIRES
+
+The existing Sky subscription and EV questions are useful, but more detail is required.
+
+Broadband requirements should include, conditionally where appropriate:
+
+* Current Sky TV package.
+* Sky TV content that must be retained, such as Sports or Cinema.
+* Number of Sky Mobile lines.
+* Summary of current Sky Mobile plans.
+* Current bundle discount, if known.
+* Whether the user will split broadband from the TV/mobile bundle.
+
+Electricity and Gas-and-electricity must have equivalent EV questions:
+
+* EV make and model.
+* Battery capacity.
+* EV annual mileage.
+* Home charger power.
+* Preferred overnight charging start and end.
+* Willingness to shift charging to off-peak hours.
+* Day/night usage split.
+* Solar export tariff and home-battery details.
+
+Show the EV questions when the household indicates that it has an EV.
+
+Extend the manual Current Deal editor to support all relevant existing API fields, including:
+
+* Promotion end date and price-increase percentage.
+* Payment method.
+* Bundle products, bundle discount and bundle terms.
+* Setup fee.
+* Insurance add-ons.
+* Arrangement fee and promotional-expiry date.
+
+Add `bundleProducts` and `bundleDiscount` to the extraction field-name list so document extraction can actually return them.
+
+6. FIX SAVINGS CALCULATIONS
+
+`computeSavings()` currently uses only the cost stored on the main service record. This means a current cost entered or confirmed in the Current Deal tab can be ignored.
+
+Change it so the current annual cost is determined in this order:
+
+1. Confirmed `annualCostGbp` or `annualPremiumGbp` from the current deal.
+2. Confirmed `monthlyCostGbp × 12`.
+3. The legacy/main service annual or monthly cost.
+4. Otherwise null.
+
+Only use values whose provenance is `user` or `extracted_confirmed`.
+
+Do not calculate savings from unsupported or uncited option prices. Add tests proving that a newly confirmed document cost changes the savings result.
+
+7. HARDEN OPENAI CALLS
+
+* Change the document-extraction fallback from `gpt-4o` to `gpt-5.6-terra`.
+* Retain `OPENAI_MODEL` as the configurable environment override.
+* Add a bounded timeout and retry policy to research calls, for example a 45-second timeout and no more than two retries.
+* Do not accidentally multiply SDK retries and custom retries.
+* Save research completion and the service’s next-research date in one database transaction.
+* Store only a generic user-safe failure message in `research_runs.error`. Do not store raw database or SDK error text.
+
+Citation handling must fail closed:
+
+* If URL-citation annotations are returned, retain only URLs supported by those annotations.
+* If no citations are returned, do not keep model-generated URLs as trusted sources.
+* Add a warning stating that no verifiable citations were returned.
+* Do not calculate savings from uncited prices.
+* Add tests for zero citations, partial citations and fabricated URLs.
+
+8. CORRECT THE DOCUMENT PRIVACY DISCLOSURE
+
+Keep `store: false`, but replace claims that OpenAI never retains the document.
+
+Use accurate wording similar to:
+
+“This document is sent to the OpenAI API for field extraction. Renewal Scout does not retain the raw document after processing. The API request uses store:false, which disables normal Responses application-state storage. OpenAI may still retain API content temporarily in abuse-monitoring logs under the data controls applicable to your OpenAI account. Review every extracted value before confirming it.”
+
+Update inaccurate code comments as well.
+
+9. BOUND WORKER CONCURRENCY
+
+`worker.ts` currently starts `executeResearch()` without awaiting it and immediately releases `pollInProgress`. This allows another AI job to start at the next poll.
+
+For this single-worker personal application:
+
+* Allow no more than one active research execution per process.
+* Await `executeResearch()` before clearing the worker-busy flag.
+* Keep the database atomic-claim protection.
+* Make worker shutdown stop polling and await any active job with a bounded shutdown timeout.
+* Add a test showing that two queued jobs cannot execute concurrently.
+
+10. MOVE SHUTDOWN HANDLERS OUT OF `app.ts`
+
+Importing `app.ts` must have no signal-handler or background-service side effects.
+
+* Remove `process.on("SIGTERM")` from `app.ts`.
+* In `index.ts`, retain the server returned from `app.listen()`.
+* Register SIGTERM and SIGINT handlers there.
+* Stop the scheduler and worker, stop accepting new HTTP requests, close the HTTP server and close the PostgreSQL pool.
+* Make shutdown idempotent and add a maximum timeout.
+
+11. REPAIR THE SOURCE EXPORT
+
+`scripts/generate-export.sh` must include `tsconfig.base.json`; the current export omits it even though every TypeScript project depends on it.
+
+Also ensure it:
+
+* Excludes `node_modules`, `dist`, coverage, secrets, `.env` files and generated exports.
+* Excludes all obsolete source-download HTML files.
+* Does not embed an old copy of the project inside another source file.
+* Generates `REVIEW_EXPORT.txt` in the private project root, never under `public/`.
+
+12. VERIFICATION
+
+Run and record the exact output and exit code for:
+
+* `pnpm install --frozen-lockfile`
+* `pnpm run typecheck`
+* `pnpm --filter @workspace/api-server run test`
+* `pnpm run build`
+
+Run the integration test only with the separately guarded disposable `TEST_DATABASE_URL`.
+
+Also verify:
+
+* `/api/healthz` returns 200.
+* Anonymous protected API requests return 401.
+* `/api/download-source` returns 404.
+* No source-download assets exist in the production build.
+* No `gpt-4o` fallback remains.
+* No `drizzle-kit push` deployment command remains.
+* The real `tsconfig.base.json` is included in the export.
+
+Create:
+
+1. `POST_REPAIR_BUILD_REPORT.md`
+2. `REVIEW_EXPORT.txt`
+
+The report must include:
+
+* Files changed.
+* Migration strategy.
+* Commands executed with exit codes.
+* Unit-test totals.
+* Integration-test result and confirmation that a disposable database was used.
+* Build result.
+* Remaining warnings or unresolved issues.
+* Confirmation that the public source-code exposure was removed.
+
+Do not claim a command passed unless it was actually executed. Do not publish yet. Return both files for external review.

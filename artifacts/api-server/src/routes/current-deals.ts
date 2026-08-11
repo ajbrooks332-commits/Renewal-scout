@@ -42,6 +42,9 @@ const SERVER_ONLY_SOURCES = new Set<string>([
 
 // ─── Known extraction field names ─────────────────────────────────────────────
 // Used to index the AI extraction output into deal fields.
+// This list drives both the AI prompt schema (EXTRACTION_SCHEMA) and the
+// ExtractionOutputSchema Zod validator — adding a field here automatically
+// propagates to both.
 const EXTRACTION_FIELD_NAMES = [
   "provider",
   "productName",
@@ -56,6 +59,9 @@ const EXTRACTION_FIELD_NAMES = [
   "promotionEndDate",
   "priceIncreasePct",
   "paymentMethod",
+  // Bundle fields — returned for broadband/mobile/multi-service documents
+  "bundleProducts",
+  "bundleDiscount",
   "inclusions",
   "exclusions",
   "notes",
@@ -103,12 +109,23 @@ function extractionToApi(row: typeof documentExtractionsTable.$inferSelect) {
   };
 }
 
+// AI_DISCLOSURE is returned in every extraction response and shown in the UI.
+// Accuracy is critical — users rely on this text to understand what was sent
+// to OpenAI and what OpenAI may retain.
+//
+// Key facts:
+//  - store:false disables Responses API application-state storage (the request
+//    is NOT saved to your OpenAI account history or used for model training).
+//  - OpenAI still processes the request and may retain API content temporarily
+//    in abuse-monitoring logs under the data controls of the caller's account.
+//  - Renewal Scout does not retain the raw document bytes after processing.
 const AI_DISCLOSURE =
-  "This document was processed by the OpenAI API for field extraction. " +
-  "Document bytes were sent to OpenAI and are not retained by Renewal Scout or by OpenAI " +
-  "(store: false was set on the request). No document content is stored by Renewal Scout. " +
-  "Review all extracted values carefully — AI extraction may contain errors. " +
-  "Only confirmed fields are used in research comparisons.";
+  "This document is sent to the OpenAI API for field extraction. " +
+  "Renewal Scout does not retain the raw document after processing. " +
+  "The API request uses store:false, which disables normal Responses application-state storage. " +
+  "OpenAI may still retain API content temporarily in abuse-monitoring logs " +
+  "under the data controls applicable to your OpenAI account. " +
+  "Review every extracted value before confirming it.";
 
 async function getOrCreateDeal(serviceId: number) {
   const [existing] = await db
@@ -153,12 +170,14 @@ router.get("/services/:id/current-deal", async (req, res): Promise<void> => {
 // Manual deal update. Only `values` and `clear` are accepted.
 // Server ALWAYS assigns source: "user" — clients cannot submit provenance.
 
+// .strict() rejects any key other than values/clear — clients cannot sneak in
+// provenance fields (source) or other unexpected properties.
 const UpdateDealBodySchema = z.object({
   /** Field name → raw value. Server assigns source:"user". */
   values: z.record(z.string(), z.unknown()).optional(),
   /** Keys whose user-entered values should be removed. */
   clear: z.array(z.string()).optional(),
-});
+}).strict();
 
 router.put("/services/:id/current-deal", async (req, res): Promise<void> => {
   const id = parseRouteId(req.params["id"]);
@@ -285,7 +304,8 @@ const EXTRACT_RATE_LIMIT = rateLimit({
   // since the app sets `trust proxy: 1` which resolves `req.ip` correctly.
 });
 
-// Zod schema for AI extraction output — all fields nullable
+// Zod schema for AI extraction output — all fields nullable.
+// Must be kept in sync with EXTRACTION_FIELD_NAMES above.
 const ExtractionOutputSchema = z.object({
   provider: z.string().nullable(),
   productName: z.string().nullable(),
@@ -300,6 +320,9 @@ const ExtractionOutputSchema = z.object({
   promotionEndDate: z.string().nullable(),
   priceIncreasePct: z.number().nullable(),
   paymentMethod: z.string().nullable(),
+  // Bundle fields
+  bundleProducts: z.string().nullable(),
+  bundleDiscount: z.string().nullable(),
   inclusions: z.string().nullable(),
   exclusions: z.string().nullable(),
   notes: z.string().nullable(),
@@ -458,7 +481,7 @@ router.post(
     for (let attempt = 0; attempt <= MAX_EXTRACT_RETRIES; attempt++) {
       try {
         const openai = new OpenAI({ apiKey });
-        const model = process.env["OPENAI_MODEL"] ?? "gpt-4o";
+        const model = process.env["OPENAI_MODEL"] ?? "gpt-4o-mini";
         const controller = new AbortController();
         const timeoutHandle = setTimeout(() => controller.abort(), OPENAI_TIMEOUT_MS);
 
@@ -726,17 +749,20 @@ router.post(
 );
 
 // Zod schema for the full confirm request body — validated before any DB operation.
-// Strict shape check prevents malformed entries from throwing inside the transaction
+// .strict() prevents malformed entries from slipping through the transaction
 // (which would mark the draft 'failed' rather than leaving it retryable).
-// `source` is included (optional) so the subsequent provenance-guard check can
-// inspect it; the server always overwrites it when persisting.
-const ConfirmBodySchema = z.object({
-  confirmedFields: z
-    .record(z.string(), z.object({ value: z.unknown(), source: z.string().optional() }))
-    .optional()
-    .default({}),
-  deletedFields: z.array(z.string()).optional().default([]),
-});
+// `source` is permitted inside confirmedFields so the subsequent provenance-guard
+// check can inspect it; the server always overwrites the source when persisting.
+// .strict() on the outer object rejects top-level keys other than the two declared.
+const ConfirmBodySchema = z
+  .object({
+    confirmedFields: z
+      .record(z.string(), z.object({ value: z.unknown(), source: z.string().optional() }))
+      .optional()
+      .default({}),
+    deletedFields: z.array(z.string()).optional().default([]),
+  })
+  .strict();
 
 // ─── PUT /services/:id/extraction-draft/:extractionId/confirm ─────────────────
 // ATOMIC: uses a DB transaction with conditional status change draft→applying.
