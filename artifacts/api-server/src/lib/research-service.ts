@@ -732,6 +732,36 @@ export async function executeResearch(runId: number): Promise<void> {
       throw new Error("AI returned invalid JSON.");
     }
 
+    // Clamp comparison_based_on before validation: this metadata field lists
+    // the household data points the AI used, and the prompt tells it to list
+    // *every* one — which can exceed the schema caps (20 items, 500 chars each)
+    // for fully populated services. Trimming this list must never fail a run.
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      Array.isArray((parsed as Record<string, unknown>).comparison_based_on)
+    ) {
+      const rawList = (parsed as Record<string, unknown>)
+        .comparison_based_on as unknown[];
+      const overItems = Math.max(0, rawList.length - 20);
+      let truncatedStrings = 0;
+      const clamped = rawList.slice(0, 20).map((entry) => {
+        if (typeof entry === "string" && entry.length > 500) {
+          truncatedStrings += 1;
+          return entry.slice(0, 500);
+        }
+        return entry;
+      });
+      (parsed as Record<string, unknown>).comparison_based_on = clamped;
+      if (overItems > 0 || truncatedStrings > 0) {
+        // Counts only — never the entries themselves.
+        logger.info(
+          { runId, droppedItems: overItems, truncatedStrings },
+          "Research: comparison_based_on clamped to schema limits",
+        );
+      }
+    }
+
     failureStage = "SCHEMA_VALIDATION";
     const validated = DealReportSchema.safeParse(parsed);
     if (!validated.success) {
